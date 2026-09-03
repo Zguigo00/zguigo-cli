@@ -1,0 +1,25 @@
+{
+  "name": "zguigo-cli",
+  "version": "0.1.0",
+  "description": "终端 AI 编程助手 - 面向学习 Agent 原理",
+  "type": "module",
+  "bin": {
+    "zguigo": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

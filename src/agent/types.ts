@@ -17,7 +17,8 @@ export type AgentEvent =
   | { type: 'tool_result'; name: string; success: boolean; data?: string }
   | { type: 'iteration'; number: number }
   | { type: 'error'; message: string }
-  | { type: 'done'; answer: string | null };
+  | { type: 'done'; answer: string | null }
+  | { type: 'compress'; beforeTokens: number; afterTokens: number };
 
 /** Agent 事件回调 */
 export type AgentEventCallback = (event: AgentEvent) => void;

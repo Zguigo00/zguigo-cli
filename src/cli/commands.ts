@@ -1,4 +1,7 @@
 import type { Message } from '../model/types.js';
+import type { ModelClient } from '../model/types.js';
+import type { CompressionConfig } from '../context/index.js';
+import { compressMessages } from '../context/index.js';
 
 /** 内置命令定义 */
 export interface Command {
@@ -10,6 +13,8 @@ export interface Command {
 export interface CommandContext {
   messages: Message[];
   clearMessages: () => void;
+  client?: ModelClient;
+  compressionConfig?: CompressionConfig;
 }
 
 /** 内置命令列表 */
@@ -24,6 +29,7 @@ zguigo - 终端 AI 编程助手
 内置命令:
   /help     显示此帮助信息
   /clear    清空对话历史
+  /compact  压缩对话历史（释放上下文空间）
   /exit     退出程序
 
 直接输入文本即可与 AI 对话。
@@ -44,6 +50,35 @@ zguigo - 终端 AI 编程助手
     description: '退出程序',
     handler: () => {
       process.exit(0);
+    },
+  },
+  {
+    name: '/compact',
+    description: '压缩对话历史（释放上下文空间）',
+    handler: async (ctx) => {
+      if (!ctx.client || !ctx.compressionConfig) {
+        console.log('压缩功能未配置。');
+        return;
+      }
+
+      if (ctx.messages.length === 0) {
+        console.log('没有对话历史需要压缩。');
+        return;
+      }
+
+      console.log('正在压缩对话历史...');
+      try {
+        const result = await compressMessages(ctx.messages, ctx.client, ctx.compressionConfig);
+        if (result.compressed) {
+          ctx.messages.length = 0;
+          ctx.messages.push(...result.messages);
+          console.log(`压缩完成: ${result.beforeTokens} → ${result.afterTokens} tokens`);
+        } else {
+          console.log('当前对话历史较短，无需压缩。');
+        }
+      } catch (err) {
+        console.error('压缩失败:', err instanceof Error ? err.message : String(err));
+      }
     },
   },
 ];

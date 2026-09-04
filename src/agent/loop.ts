@@ -1,6 +1,7 @@
 import type { ModelClient, Message } from '../model/types.js';
 import type { ToolRegistry } from '../tools/protocol.js';
 import type { AgentState, AgentEvent, AgentEventCallback } from './types.js';
+import { shouldCompress, compressMessages, type CompressionConfig } from '../context/index.js';
 
 /** 最大模型调用轮数 */
 const MAX_ITERATIONS = 8;
@@ -11,6 +12,8 @@ export interface RunAgentOptions {
   messages: Message[];
   onEvent?: AgentEventCallback;
   debug?: boolean;
+  /** 上下文压缩配置，传入则启用自动压缩 */
+  compressionConfig?: CompressionConfig;
 }
 
 /**
@@ -55,6 +58,31 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
     if (debug) {
       console.error(`\n[debug] === 第 ${state.iteration} 轮 ===`);
       console.error(`[debug] 消息数量: ${messages.length}`);
+    }
+
+    // 自动压缩检查
+    if (options.compressionConfig && shouldCompress(messages, options.compressionConfig)) {
+      if (debug) {
+        console.error(`[debug] 触发上下文压缩`);
+      }
+      try {
+        const result = await compressMessages(messages, client, options.compressionConfig);
+        if (result.compressed) {
+          // 替换消息列表内容
+          messages.length = 0;
+          messages.push(...result.messages);
+          emit({ type: 'compress', beforeTokens: result.beforeTokens, afterTokens: result.afterTokens });
+          if (debug) {
+            console.error(`[debug] 压缩完成: ${result.beforeTokens} → ${result.afterTokens} tokens`);
+          }
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (debug) {
+          console.error(`[debug] 压缩失败: ${errMsg}`);
+        }
+        // 压缩失败不影响正常流程
+      }
     }
 
     try {

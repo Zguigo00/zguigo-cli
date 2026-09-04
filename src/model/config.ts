@@ -4,6 +4,12 @@ export interface ModelConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** 上下文窗口大小（token 数） */
+  contextWindowSize: number;
+  /** 压缩触发阈值（0-1），达到此比例时自动压缩 */
+  compressionThreshold: number;
+  /** 摘要压缩后保留的最近消息条数 */
+  recentMessageCount: number;
 }
 
 /**
@@ -27,5 +33,12 @@ export function loadModelConfig(): ModelConfig {
     );
   }
 
-  return { apiKey: apiKey!, baseUrl: baseUrl!, model: model! };
+  return {
+    apiKey: apiKey!,
+    baseUrl: baseUrl!,
+    model: model!,
+    contextWindowSize: parseInt(process.env.CONTEXT_WINDOW_SIZE ?? '65536', 10),
+    compressionThreshold: parseFloat(process.env.COMPRESSION_THRESHOLD ?? '0.8'),
+    recentMessageCount: parseInt(process.env.RECENT_MESSAGE_COUNT ?? '5', 10),
+  };
 }

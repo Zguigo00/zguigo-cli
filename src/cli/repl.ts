@@ -5,6 +5,8 @@ import type { ModelClient } from '../model/types.js';
 import type { ToolRegistry } from '../tools/protocol.js';
 import { runAgent } from '../agent/loop.js';
 import { DebugLogger } from '../debug/logger.js';
+import { loadModelConfig } from '../model/config.js';
+import type { CompressionConfig } from '../context/index.js';
 
 export interface ReplOptions {
   client: ModelClient;
@@ -21,6 +23,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const messages: Message[] = [];
   const commandNames = getCommandNames();
   const logger = new DebugLogger(debugMode ?? false);
+
+  // 加载压缩配置
+  const modelConfig = loadModelConfig();
+  const compressionConfig: CompressionConfig = {
+    contextWindowSize: modelConfig.contextWindowSize,
+    compressionThreshold: modelConfig.compressionThreshold,
+    recentMessageCount: modelConfig.recentMessageCount,
+  };
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -52,7 +62,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       if (!trimmed) continue;
 
       // 处理内置命令
-      const handled = await handleCommand(trimmed, { messages, clearMessages });
+      const handled = await handleCommand(trimmed, { messages, clearMessages, client, compressionConfig });
       if (handled) continue;
 
       // 普通消息 → Agent Loop
@@ -63,6 +73,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         tools,
         messages,
         debug: debugMode,
+        compressionConfig,
         onEvent: (event) => {
           switch (event.type) {
             case 'text':
@@ -84,6 +95,12 @@ export async function startRepl(options: ReplOptions): Promise<void> {
               if (event.answer) {
                 process.stdout.write('\n');
               }
+              break;
+            case 'compress':
+              if (debugMode) {
+                logger.iteration(0);
+              }
+              console.log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
               break;
           }
         },

@@ -1,85 +1,88 @@
 # 上下文压缩
 
-## 问题
+## 现状
 
-对话越来越长，消息列表会超出模型的上下文限制：
+当前对话历史无限增长，长对话会导致：
+- API 调用 token 超限报错
+- 费用线性增长
 
-```
-第 1 轮: [system, user, assistant]                    ~500 tokens
-第 5 轮: [system, user, assistant, tool, assistant...]  ~5000 tokens
-第 20 轮: [system, ... 40条消息 ...]                    ~50000 tokens → 超限
-```
+## 设计方案
 
-## 解决思路
+### 方案一：模型总结式压缩（推荐）
 
-当消息太多时，把旧消息压缩成一段摘要，只保留最近几轮的完整消息：
+**流程：**
+1. 对话接近 token 上限时自动触发，或用户手动 `/compact`
+2. 将历史消息发送给模型，要求生成简洁摘要
+3. 用摘要替换原始历史，保留 system message + 最近几轮对话
 
-```
-压缩前:
-  [system, msg1, msg2, msg3, msg4, msg5, msg6, msg7, msg8, msg9, msg10]
+**优点：** 语义保留好，实现简单
+**缺点：** 压缩本身消耗 token
 
-压缩后:
-  [system, "摘要: 用户问了X，我做了Y...", msg8, msg9, msg10]
-```
+### 方案二：滑动窗口
 
-## 实现方式
+**流程：**
+保留 system message + 最近 N 轮对话，丢弃更早的消息。
 
-### 方式一：调模型压缩
+**优点：** 零成本
+**缺点：** 丢失早期上下文
 
-把旧消息发给模型 → "请用中文总结这段对话的要点" → 得到摘要
+### 方案三：组合式（最佳）
 
-- 优点：摘要质量好
-- 缺点：多一次 API 调用，有成本
-
-### 方式二：滑动窗口
-
-保留最近 N 条消息，直接丢掉更早的
-
-- 优点：简单，零成本
-- 缺点：丢失旧上下文
-
-### 方式三：两者结合（推荐）
-
-旧消息 → 调模型生成摘要，最近 N 条 → 保留完整
+结合方案一和方案二：
+1. 保留 system message 不变
+2. 超出窗口的历史用模型压缩成摘要
+3. 最近 N 轮对话保持原样
 
 ```
-合并: [system, 摘要, 最近N条]
+[system] ...（保留）
+[assistant] 以下是之前对话的摘要：...（压缩）
+[user] 最近一轮的问题
+[assistant] 最近一轮的回答
 ```
 
-## 触发条件
+## 配置
 
-消息总 token 数超过阈值（70%-80%）时触发压缩：
+通过 `.env` 环境变量配置：
 
-```typescript
-if (estimateTokens(messages) > MAX_CONTEXT * 0.7) {
-  messages = await compress(messages);
-}
+```
+CONTEXT_WINDOW_SIZE=65536          # 上下文窗口大小（token 数）
+COMPRESSION_THRESHOLD=0.8          # 压缩触发阈值（0-1），达到此比例时自动压缩
+RECENT_MESSAGE_COUNT=5             # 压缩后保留的最近消息条数
 ```
 
-## 代码结构
+## 实现
 
-```typescript
-async function compressMessages(messages: Message[]): Promise<Message[]> {
-  // 1. 分离：旧消息 vs 最近 N 条
-  const old = messages.slice(0, -KEEP_RECENT);
-  const recent = messages.slice(-KEEP_RECENT);
+### 已完成
 
-  // 2. 调模型生成摘要
-  const summary = await client.chat([
-    { role: 'user', content: `总结这段对话：\n${JSON.stringify(old)}` }
-  ]);
+#### `src/context/` 目录结构
 
-  // 3. 合并
-  return [
-    { role: 'system', content: systemPrompt },
-    { role: 'assistant', content: `[对话摘要]\n${summary}` },
-    ...recent
-  ];
-}
+```
+src/context/
+├── compress.ts   # 核心压缩逻辑
+├── prompt.ts     # 摘要用的 system prompt 模板
+└── index.ts      # 公共导出
 ```
 
-## 总结
+#### 核心函数
 
-对话太长 → 摘要旧消息 + 保留最近几轮 → 继续对话
+**`estimateTokens(text)`** — token 估算（中文 ~1.5字/token，英文 ~4字符/token）
+**`estimateMessagesTokens(messages)`** — 计算消息列表总 token 数
+**`shouldCompress(messages, config)`** — 判断是否需要压缩
+**`compressMessages(messages, client, config)`** — 执行压缩，返回压缩后的消息列表
 
-模型既能记住最近在做什么，又不会超出上下文限制。
+#### 压缩流程
+
+1. 每轮 agent loop 调用模型前检查 `shouldCompress()`
+2. 达到阈值时调用 `compressMessages()`：
+   - 分离 system message
+   - 将超出保留数量的历史消息用模型生成摘要
+   - 组装：`[system] + [摘要] + [最近N条]`
+3. 替换 messages 数组内容，继续对话
+
+#### `/compact` 命令
+
+在 REPL 中输入 `/compact` 可手动触发压缩。
+
+#### 测试
+
+`tests/context/compress.test.ts` — 15 个单元测试覆盖所有核心函数。

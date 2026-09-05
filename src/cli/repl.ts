@@ -84,6 +84,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
               break;
             case 'tool_result':
               logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+              // 写入工具提示
+              if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
+                console.log(`\n[文件变更] ${event.data ?? ''}`);
+              }
               break;
             case 'iteration':
               logger.iteration(event.number);

@@ -4,6 +4,7 @@ import { readFileTool } from './read-file.js';
 import { writeFileTool } from './write-file.js';
 import { editFileTool } from './edit-file.js';
 import { createDirectoryTool } from './create-directory.js';
+import { runCommandTool } from './run-command.js';
 
 export { ToolRegistry } from './protocol.js';
 export type { Tool, ToolResult } from './protocol.js';
@@ -16,5 +17,6 @@ export function createDefaultToolRegistry(): ToolRegistry {
   registry.register(writeFileTool);
   registry.register(editFileTool);
   registry.register(createDirectoryTool);
+  registry.register(runCommandTool);
   return registry;
 }

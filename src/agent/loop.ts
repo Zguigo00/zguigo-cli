@@ -14,6 +14,8 @@ export interface RunAgentOptions {
   debug?: boolean;
   /** 上下文压缩配置，传入则启用自动压缩 */
   compressionConfig?: CompressionConfig;
+  /** 工具确认回调，返回 true 允许执行，false 拒绝 */
+  confirmToolCall?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>;
 }
 
 /**
@@ -162,6 +164,28 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
           });
           emit({ type: 'error', message: errorMsg });
           continue;
+        }
+
+        const tool = tools.get(tc.name);
+
+        // 需要确认的工具
+        if (tool?.requiresConfirmation && options.confirmToolCall) {
+          const confirmMsg = tool.confirmMessage
+            ? tool.confirmMessage(parsedArgs)
+            : `即将执行: ${tc.name}`;
+          emit({ type: 'confirm', toolName: tc.name, message: confirmMsg });
+
+          const approved = await options.confirmToolCall(tc.name, parsedArgs);
+          if (!approved) {
+            const rejectMsg = `用户拒绝执行: ${tc.name}`;
+            messages.push({
+              role: 'tool',
+              content: JSON.stringify({ success: false, error: rejectMsg }),
+              tool_call_id: tc.id,
+            });
+            emit({ type: 'tool_result', name: tc.name, success: false, data: rejectMsg });
+            continue;
+          }
         }
 
         const result = await tools.call(tc.name, parsedArgs);

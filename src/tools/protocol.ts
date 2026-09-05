@@ -12,6 +12,10 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** 是否需要用户确认后才执行（写入/危险操作） */
+  requiresConfirmation?: boolean;
+  /** 确认时显示给用户的描述（如命令内容、文件路径等） */
+  confirmMessage?: (args: Record<string, unknown>) => string;
   execute(args: Record<string, unknown>): Promise<ToolResult>;
 }
 

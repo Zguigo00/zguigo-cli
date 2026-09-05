@@ -20,6 +20,10 @@ export const writeFileTool: Tool = {
     },
     required: ['path', 'content'],
   },
+  requiresConfirmation: true,
+  confirmMessage(args): string {
+    return `即将写入文件: ${args.path as string}`;
+  },
   async execute(args): Promise<ToolResult> {
     const inputPath = args.path as string;
     const content = args.content as string;

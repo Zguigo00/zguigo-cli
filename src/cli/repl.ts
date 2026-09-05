@@ -48,6 +48,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       });
     });
 
+  /** 确认提示，返回 true/false */
+  const askConfirm = (message: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      rl.question(`\x1b[33m[确认] ${message}? (y/n)\x1b[0m `, (answer) => {
+        resolve(answer.trim().toLowerCase() === 'y');
+      });
+    });
+
   const clearMessages = () => {
     messages.length = 0;
   };
@@ -74,6 +82,13 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         messages,
         debug: debugMode,
         compressionConfig,
+        confirmToolCall: async (toolName, args) => {
+          const tool = tools.get(toolName);
+          const msg = tool?.confirmMessage
+            ? tool.confirmMessage(args)
+            : `即将执行: ${toolName}`;
+          return askConfirm(msg);
+        },
         onEvent: (event) => {
           switch (event.type) {
             case 'text':
@@ -84,9 +99,12 @@ export async function startRepl(options: ReplOptions): Promise<void> {
               break;
             case 'tool_result':
               logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
-              // 写入工具提示
+              // 写入/命令工具提示
               if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
                 console.log(`\n[文件变更] ${event.data ?? ''}`);
+              }
+              if (event.name === 'run_command' && event.success) {
+                console.log(`\n[命令输出] ${event.data ?? ''}`);
               }
               break;
             case 'iteration':

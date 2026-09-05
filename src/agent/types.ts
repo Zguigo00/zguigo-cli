@@ -18,7 +18,8 @@ export type AgentEvent =
   | { type: 'iteration'; number: number }
   | { type: 'error'; message: string }
   | { type: 'done'; answer: string | null }
-  | { type: 'compress'; beforeTokens: number; afterTokens: number };
+  | { type: 'compress'; beforeTokens: number; afterTokens: number }
+  | { type: 'confirm'; toolName: string; message: string };
 
 /** Agent 事件回调 */
 export type AgentEventCallback = (event: AgentEvent) => void;

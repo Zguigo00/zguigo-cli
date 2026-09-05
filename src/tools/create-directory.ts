@@ -15,6 +15,10 @@ export const createDirectoryTool: Tool = {
     },
     required: ['path'],
   },
+  requiresConfirmation: true,
+  confirmMessage(args): string {
+    return `即将创建目录: ${args.path as string}`;
+  },
   async execute(args): Promise<ToolResult> {
     const inputPath = args.path as string;
 

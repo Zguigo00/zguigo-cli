@@ -2,7 +2,7 @@
 
 ## 功能概述
 
-zguigo 是一个终端 AI 编程助手，通过 OpenAI 兼容接口接入小米 MiMo 模型，实现流式对话、工具调用和上下文压缩。
+zguigo 是一个终端 AI 编程助手，通过 OpenAI 兼容接口接入小米 MiMo 模型，实现流式对话、工具调用、上下文压缩、文件写入和 Shell 命令执行。
 
 ## 目录结构
 
@@ -22,7 +22,7 @@ zguigo_Cli/
 │   │   └── types.ts      # Agent 状态和事件类型
 │   ├── cli/
 │   │   ├── index.ts      # 公共导出
-│   │   ├── repl.ts       # REPL 交互界面
+│   │   ├── repl.ts       # REPL 交互界面（含确认提示）
 │   │   ├── commands.ts   # 内置命令（/help, /clear, /compact, /exit）
 │   │   └── render.ts     # 输出渲染
 │   ├── context/
@@ -39,10 +39,14 @@ zguigo_Cli/
 │   │   ├── client.ts     # OpenAI SDK 封装，支持流式/非流式调用
 │   │   └── types.ts      # Message, ModelClient, StreamEvent 等类型
 │   ├── tools/
-│   │   ├── index.ts      # 工具注册表
-│   │   ├── protocol.ts   # ToolRegistry 接口
-│   │   ├── list-files.ts # list_files 工具实现
-│   │   └── read-file.ts  # read_file 工具实现
+│   │   ├── index.ts      # 工具注册表（6个工具）
+│   │   ├── protocol.ts   # ToolRegistry 接口 + Tool 接口
+│   │   ├── list-files.ts # list_files（只读）
+│   │   ├── read-file.ts  # read_file（只读）
+│   │   ├── write-file.ts # write_file（写入，需确认）
+│   │   ├── edit-file.ts  # edit_file（写入，需确认）
+│   │   ├── create-directory.ts # create_directory（写入，需确认）
+│   │   └── run-command.ts # run_command（Shell，需确认）
 │   └── workspace/
 │       ├── index.ts      # 公共导出
 │       ├── safety.ts     # 路径安全检查（safeResolve）
@@ -56,16 +60,30 @@ zguigo_Cli/
 │   ├── context/
 │   │   └── compress.test.ts  # 上下文压缩测试（15个用例）
 │   └── tools/
-│       ├── read-files.test.ts # 文件读取工具测试
-│       └── safety.test.ts     # 路径安全测试
+│       ├── read-files.test.ts    # 文件读取测试
+│       ├── safety.test.ts        # 路径安全测试
+│       ├── write-tools.test.ts   # 写入工具测试（17个用例）
+│       └── run-command.test.ts   # Shell 命令测试（6个用例）
 └── docs/
     ├── zguigo-agent-cli-design.md  # 原始设计文档
     ├── project-structure.md        # 项目结构（本文件）
     ├── src-flow.md                 # src 目录流程详解
     ├── context-compression.md      # 上下文压缩设计与实现
     ├── context-compression-flow.md # 压缩流程详解
+    ├── write-tools-flow.md         # 写入工具与 Shell 命令流程
     └── testing.md                  # 测试机制说明
 ```
+
+## 工具列表
+
+| 工具 | 类型 | 需确认 | 说明 |
+|------|------|--------|------|
+| `list_files` | 只读 | ❌ | 查看目录结构 |
+| `read_file` | 只读 | ❌ | 读取文件内容（≤200KB） |
+| `write_file` | 写入 | ✅ | 创建/覆写文件，自动创建父目录 |
+| `edit_file` | 写入 | ✅ | 查找替换编辑，要求唯一匹配 |
+| `create_directory` | 写入 | ✅ | 递归创建目录 |
+| `run_command` | Shell | ✅ | 执行命令，30秒超时，50KB输出截断 |
 
 ## 功能实现状态
 
@@ -73,9 +91,10 @@ zguigo_Cli/
 |------|------|------|
 | REPL 交互 | ✅ | readline + Tab 补全 + 内置命令 |
 | 流式对话 | ✅ | 通过 MiMo 模型实时输出 |
-| 工具调用 | ✅ | list_files + read_file（只读） |
+| 只读工具 | ✅ | list_files + read_file |
+| 写入工具 | ✅ | write_file + edit_file + create_directory |
+| Shell 命令 | ✅ | run_command，30秒超时 |
+| 工具确认 | ✅ | 写入/Shell 工具执行前弹出 y/n 确认 |
 | 路径安全 | ✅ | 防止 `../` 越界访问 |
 | 上下文压缩 | ✅ | 滑动窗口 + 模型摘要，自动/手动触发 |
 | --debug 模式 | ✅ | 输出调用细节、耗时、token 数 |
-| 写入工具 | ❌ | Phase 5 未实现（需要权限控制） |
-| Shell 命令 | ❌ | Phase 5 未实现 |

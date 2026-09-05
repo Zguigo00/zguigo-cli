@@ -1,46 +1,81 @@
-# zguigo CLI 结构与功能
+# 项目结构
 
-## 运行方式
+## 功能概述
 
-```bash
-# 在项目根目录运行
-npx tsx src/index.ts          # 交互式 REPL
-npx tsx src/index.ts --debug  # 带调试日志
-```
-
-## 核心架构
-
-```
-用户输入 → REPL → Agent Loop → Model Client → MiMo API
-                         ↓
-                   Tool Registry
-                    ├─ list_files  (递归列出目录)
-                    └─ read_file   (读取文件内容)
-```
+zguigo 是一个终端 AI 编程助手，通过 OpenAI 兼容接口接入小米 MiMo 模型，实现流式对话、工具调用和上下文压缩。
 
 ## 目录结构
 
-| 目录 | 功能 |
-|------|------|
-| `src/cli/` | 命令行界面：REPL 循环、`/help` `/clear` `/exit` 命令、流式输出渲染 |
-| `src/model/` | 模型客户端：OpenAI SDK 封装、`.env` 配置加载、流式/非流式调用 |
-| `src/agent/` | Agent Loop：最多 8 轮迭代，流式处理模型响应，执行工具调用 |
-| `src/tools/` | 工具协议与实现：工具注册、参数定义、执行 |
-| `src/workspace/` | 路径安全：限制文件访问在工作区内，过滤 `.git` `node_modules` 等目录 |
-| `src/debug/` | 调试日志：输出到 stderr |
-| `tests/` | 测试：工具、路径安全、Agent Loop、CLI 命令（29 个用例） |
+```
+zguigo_Cli/
+├── .env.example          # 环境变量模板
+├── .gitignore            # Git 忽略规则
+├── CLAUDE.md             # Claude Code 项目指引
+├── package.json          # 项目依赖
+├── tsconfig.json         # TypeScript 配置
+├── vitest.config.ts      # 测试配置
+├── src/
+│   ├── index.ts          # 入口：加载配置 → 初始化 → 启动 REPL
+│   ├── agent/
+│   │   ├── index.ts      # 公共导出
+│   │   ├── loop.ts       # Agent Loop 核心循环
+│   │   └── types.ts      # Agent 状态和事件类型
+│   ├── cli/
+│   │   ├── index.ts      # 公共导出
+│   │   ├── repl.ts       # REPL 交互界面
+│   │   ├── commands.ts   # 内置命令（/help, /clear, /compact, /exit）
+│   │   └── render.ts     # 输出渲染
+│   ├── context/
+│   │   ├── index.ts      # 公共导出
+│   │   ├── compress.ts   # 上下文压缩核心逻辑
+│   │   └── prompt.ts     # 摘要用提示词模板
+│   ├── debug/
+│   │   └── logger.ts     # 调试日志输出
+│   ├── errors/
+│   │   └── index.ts      # 统一错误类型（ConfigError, ToolError, ModelError）
+│   ├── model/
+│   │   ├── index.ts      # 公共导出
+│   │   ├── config.ts     # 环境变量读取（API Key, URL, 压缩配置）
+│   │   ├── client.ts     # OpenAI SDK 封装，支持流式/非流式调用
+│   │   └── types.ts      # Message, ModelClient, StreamEvent 等类型
+│   ├── tools/
+│   │   ├── index.ts      # 工具注册表
+│   │   ├── protocol.ts   # ToolRegistry 接口
+│   │   ├── list-files.ts # list_files 工具实现
+│   │   └── read-file.ts  # read_file 工具实现
+│   └── workspace/
+│       ├── index.ts      # 公共导出
+│       ├── safety.ts     # 路径安全检查（safeResolve）
+│       └── filter.ts     # 目录过滤（.git, node_modules 等）
+├── tests/
+│   ├── agent/
+│   │   ├── errors.test.ts    # 错误处理测试
+│   │   └── loop.test.ts      # Agent 循环测试
+│   ├── cli/
+│   │   └── commands.test.ts  # REPL 命令测试
+│   ├── context/
+│   │   └── compress.test.ts  # 上下文压缩测试（15个用例）
+│   └── tools/
+│       ├── read-files.test.ts # 文件读取工具测试
+│       └── safety.test.ts     # 路径安全测试
+└── docs/
+    ├── zguigo-agent-cli-design.md  # 原始设计文档
+    ├── project-structure.md        # 项目结构（本文件）
+    ├── src-flow.md                 # src 目录流程详解
+    ├── context-compression.md      # 上下文压缩设计与实现
+    ├── context-compression-flow.md # 压缩流程详解
+    └── testing.md                  # 测试机制说明
+```
 
-## 当前能力
+## 功能实现状态
 
-- ✅ 连接小米 MiMo 模型（OpenAI 兼容接口）
-- ✅ 流式输出模型回复
-- ✅ 读取文件和列出目录（只读工具）
-- ✅ 路径安全限制，防目录遍历
-- ✅ REPL 交互，支持 `/help` `/clear` `/exit`
-
-## 未实现
-
-- ❌ 写文件、创建目录等写入工具
-- ❌ 权限控制（写入前需用户确认）
-- ❌ Shell 命令执行
-- ❌ 上下文压缩（长对话自动精简）
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| REPL 交互 | ✅ | readline + Tab 补全 + 内置命令 |
+| 流式对话 | ✅ | 通过 MiMo 模型实时输出 |
+| 工具调用 | ✅ | list_files + read_file（只读） |
+| 路径安全 | ✅ | 防止 `../` 越界访问 |
+| 上下文压缩 | ✅ | 滑动窗口 + 模型摘要，自动/手动触发 |
+| --debug 模式 | ✅ | 输出调用细节、耗时、token 数 |
+| 写入工具 | ❌ | Phase 5 未实现（需要权限控制） |
+| Shell 命令 | ❌ | Phase 5 未实现 |

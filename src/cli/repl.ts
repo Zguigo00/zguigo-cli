@@ -16,6 +16,91 @@ import { refactorCommand } from '../skills/built-in/refactor.js';
 /** 只读模式下禁止的工具列表 */
 const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
 
+/** 命令信息 */
+interface CommandInfo {
+  name: string;
+  description: string;
+  readOnly?: boolean;
+}
+
+/**
+ * 交互式命令选择菜单
+ * 使用上下箭头选择，回车确认
+ */
+function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | null> {
+  return new Promise((resolve) => {
+    if (commands.length === 0) {
+      resolve(null);
+      return;
+    }
+
+    let selectedIndex = 0;
+    let isFirstRender = true;
+
+    // 渲染菜单
+    const render = () => {
+      // 清除之前的输出
+      if (!isFirstRender) {
+        process.stdout.write(`\x1b[${commands.length + 1}A`);
+      }
+      isFirstRender = false;
+
+      console.log('\x1b[36m选择命令 (↑↓ 移动, Enter 确认, Esc 取消):\x1b[0m');
+
+      for (let i = 0; i < commands.length; i++) {
+        const cmd = commands[i];
+        const prefix = i === selectedIndex ? '\x1b[32m❯\x1b[0m' : ' ';
+        const readOnlyTag = cmd.readOnly ? ' \x1b[90m[只读]\x1b[0m' : '';
+        const line = `  ${prefix} /${cmd.name}${readOnlyTag} - ${cmd.description}`;
+
+        // 高亮选中项
+        if (i === selectedIndex) {
+          console.log(`\x1b[36m${line}\x1b[0m`);
+        } else {
+          console.log(line);
+        }
+      }
+    };
+
+    // 初始渲染
+    render();
+
+    // 监听键盘
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+
+    const onKeypress = (str: string, key: readline.Key) => {
+      if (key.name === 'up') {
+        selectedIndex = Math.max(0, selectedIndex - 1);
+        render();
+      } else if (key.name === 'down') {
+        selectedIndex = Math.min(commands.length - 1, selectedIndex + 1);
+        render();
+      } else if (key.name === 'return') {
+        cleanup();
+        resolve(commands[selectedIndex]);
+      } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    const cleanup = () => {
+      process.stdin.removeListener('keypress', onKeypress);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      // 移动光标到菜单下方
+      process.stdout.write(`\x1b[${commands.length - selectedIndex}B`);
+      console.log('');
+    };
+
+    process.stdin.on('keypress', onKeypress);
+  });
+}
+
 export interface ReplOptions {
   client: ModelClient;
   tools: ToolRegistry;
@@ -59,6 +144,13 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const skillCommandNames = allCommands.map(c => `/${c.name}`);
   const allCommandNames = [...commandNames, ...skillCommandNames];
 
+  // 调试输出
+  if (debugMode) {
+    console.error('[debug] 内置命令:', commandNames);
+    console.error('[debug] Skill 命令:', skillCommandNames);
+    console.error('[debug] 所有命令:', allCommandNames);
+  }
+
   // 加载压缩配置
   const modelConfig = loadModelConfig();
   const compressionConfig: CompressionConfig = {
@@ -76,11 +168,98 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     },
   });
 
-  const prompt = (): Promise<string> =>
+  /**
+   * 带命令选择的输入提示
+   * 输入 / 时立即显示选择菜单
+   */
+  const promptWithSelector = (): Promise<string> =>
     new Promise((resolve) => {
-      rl.question('\x1b[36m你>\x1b[0m ', (answer) => {
-        resolve(answer);
-      });
+      let inputBuffer = '';
+      let isMenuActive = false;
+
+      const renderPrompt = () => {
+        process.stdout.write('\r\x1b[K\x1b[36m你>\x1b[0m ' + inputBuffer);
+      };
+
+      readline.emitKeypressEvents(process.stdin);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+      }
+
+      const onKeypress = async (str: string, key: readline.Key) => {
+        // Ctrl+C 退出
+        if (key.ctrl && key.name === 'c') {
+          cleanup();
+          process.exit(0);
+        }
+
+        // 菜单激活时的处理
+        if (isMenuActive) {
+          return;
+        }
+
+        // 检测到 / 且缓冲区为空时触发菜单
+        if (str === '/' && inputBuffer === '') {
+          isMenuActive = true;
+          cleanup();
+
+          const commandList = allCommands.map(c => ({
+            name: c.name,
+            description: c.description,
+            readOnly: c.readOnly,
+          }));
+
+          const selected = await showCommandSelector(commandList);
+          if (selected) {
+            // 选中后提示输入参数
+            process.stdout.write(`\x1b[36m/${selected.name}\x1b[0m `);
+            const args = await new Promise<string>((res) => {
+              rl.question('', (answer) => {
+                res(answer.trim());
+              });
+            });
+            resolve(`/${selected.name} ${args}`);
+          } else {
+            // 取消，重新显示提示符
+            inputBuffer = '';
+            renderPrompt();
+            isMenuActive = false;
+            return;
+          }
+          return;
+        }
+
+        // 回车确认
+        if (key.name === 'return') {
+          cleanup();
+          console.log('');
+          resolve(inputBuffer);
+          return;
+        }
+
+        // 退格
+        if (key.name === 'backspace') {
+          inputBuffer = inputBuffer.slice(0, -1);
+          renderPrompt();
+          return;
+        }
+
+        // 普通字符
+        if (str && !key.ctrl && !key.meta) {
+          inputBuffer += str;
+          renderPrompt();
+        }
+      };
+
+      const cleanup = () => {
+        process.stdin.removeListener('keypress', onKeypress);
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(false);
+        }
+      };
+
+      process.stdin.on('keypress', onKeypress);
+      renderPrompt();
     });
 
   /** 确认提示，返回 true/false */
@@ -95,13 +274,12 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     messages.length = 0;
   };
 
-  console.log('zguigo v0.1.0 — 输入 /help 查看命令，Ctrl+C 退出\n');
+  console.log('zguigo v0.1.0 — 输入 / 选择命令，Ctrl+C 退出\n');
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      const input = await prompt();
-      const trimmed = input.trim();
+      const trimmed = (await promptWithSelector()).trim();
       if (!trimmed) continue;
 
       // 处理内置命令

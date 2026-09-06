@@ -1,9 +1,9 @@
-import { readdir, readFile } from 'fs/promises';
+import { readdir, readFile, stat } from 'fs/promises';
 import { join, basename } from 'path';
 import type { Command, CommandSource } from './protocol.js';
 
 /** 解析 .md 文件为 Command */
-function parseMdCommand(content: string, filePath: string): Command {
+function parseMdCommand(content: string, filePath: string, commandName?: string): Command {
   const lines = content.split('\n');
 
   // 提取第一行非空行作为 description
@@ -27,7 +27,7 @@ function parseMdCommand(content: string, filePath: string): Command {
   // 检查是否包含只读标记
   const readOnly = content.includes('只读') || content.includes('readOnly');
 
-  const name = basename(filePath, '.md');
+  const name = commandName || basename(filePath, '.md');
 
   return {
     name,
@@ -96,30 +96,51 @@ export class CommandRegistry {
     return Array.from(allCommands.values());
   }
 
-  /** 从目录加载指定命令 */
+  /** 从目录加载指定命令（支持子目录） */
   private async loadFromFile(dir: string, name: string): Promise<Command | undefined> {
     try {
+      // 1. 尝试直接加载 {name}.md
       const filePath = join(dir, `${name}.md`);
       const content = await readFile(filePath, 'utf-8');
       return parseMdCommand(content, filePath);
     } catch {
-      return undefined;
+      // 2. 尝试加载 {name}/SKILL.md
+      try {
+        const skillPath = join(dir, name, 'SKILL.md');
+        const content = await readFile(skillPath, 'utf-8');
+        return parseMdCommand(content, skillPath, name);
+      } catch {
+        return undefined;
+      }
     }
   }
 
-  /** 从目录加载所有 .md 命令 */
+  /** 从目录加载所有命令（支持子目录） */
   private async loadAllFromDir(dir: string): Promise<Command[]> {
     try {
-      const files = await readdir(dir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      const entries = await readdir(dir, { withFileTypes: true });
       const commands: Command[] = [];
 
-      for (const file of mdFiles) {
-        try {
-          const content = await readFile(join(dir, file), 'utf-8');
-          commands.push(parseMdCommand(content, join(dir, file)));
-        } catch {
-          // 忽略无法读取的文件
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          // 子目录：查找 SKILL.md
+          try {
+            const skillPath = join(fullPath, 'SKILL.md');
+            const content = await readFile(skillPath, 'utf-8');
+            commands.push(parseMdCommand(content, skillPath, entry.name));
+          } catch {
+            // 目录下没有 SKILL.md，跳过
+          }
+        } else if (entry.name.endsWith('.md')) {
+          // .md 文件：直接加载
+          try {
+            const content = await readFile(fullPath, 'utf-8');
+            commands.push(parseMdCommand(content, fullPath));
+          } catch {
+            // 忽略无法读取的文件
+          }
         }
       }
 

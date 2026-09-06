@@ -1,7 +1,7 @@
-import { readdir, readFile } from 'fs/promises';
+import { readdir, readFile, stat } from 'fs/promises';
 import { join } from 'path';
 
-/** 知识加载器 - 加载 Skills 目录中的 .md 文件 */
+/** 知识加载器 - 加载 Skills 目录中的 .md 文件（支持子目录） */
 export class KnowledgeLoader {
   private projectSkillsDir: string;
   private userSkillsDir: string;
@@ -14,6 +14,7 @@ export class KnowledgeLoader {
   /**
    * 加载所有 .md 文件内容，拼接为一段知识文本
    * 扫描顺序：用户级 → 项目级
+   * 支持子目录结构（如 brainstorming/SKILL.md）
    */
   async loadAll(): Promise<string> {
     const sections: string[] = [];
@@ -33,29 +34,37 @@ export class KnowledgeLoader {
     return sections.join('\n\n---\n\n');
   }
 
-  /** 从目录加载所有 .md 文件 */
+  /** 从目录递归加载所有 .md 文件 */
   private async loadFromDir(dir: string): Promise<string> {
     try {
-      const files = await readdir(dir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
-
-      if (mdFiles.length === 0) return '';
-
       const contents: string[] = [];
+      await this.scanDir(dir, contents);
+      return contents.join('\n\n');
+    } catch {
+      // 目录不存在
+      return '';
+    }
+  }
 
-      for (const file of mdFiles) {
+  /** 递归扫描目录 */
+  private async scanDir(dir: string, contents: string[]): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        // 递归扫描子目录
+        await this.scanDir(fullPath, contents);
+      } else if (entry.name.endsWith('.md')) {
+        // 读取 .md 文件
         try {
-          const content = await readFile(join(dir, file), 'utf-8');
+          const content = await readFile(fullPath, 'utf-8');
           contents.push(content.trim());
         } catch {
           // 忽略无法读取的文件
         }
       }
-
-      return contents.join('\n\n');
-    } catch {
-      // 目录不存在
-      return '';
     }
   }
 }

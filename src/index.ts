@@ -1,10 +1,23 @@
 #!/usr/bin/env node
 
 import { config } from 'dotenv';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
+import { existsSync } from 'fs';
 
-// 加载项目根目录 .env
-config({ path: resolve(process.cwd(), '.env') });
+// 配置加载优先级：
+// 1. 当前目录 .env
+// 2. 用户主目录 ~/.zguigo/.env
+const localEnv = resolve(process.cwd(), '.env');
+const homeEnv = join(process.env.HOME || process.env.USERPROFILE || '', '.zguigo', '.env');
+
+if (existsSync(localEnv)) {
+  config({ path: localEnv });
+} else if (existsSync(homeEnv)) {
+  config({ path: homeEnv });
+} else {
+  // 都没有，尝试加载（会从系统环境变量读取）
+  config();
+}
 
 import { ConfigError } from './errors/index.js';
 import { createModelClient } from './model/index.js';

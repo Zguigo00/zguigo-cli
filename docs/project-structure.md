@@ -91,6 +91,7 @@ zguigo_Cli/
     ├── write-tools-flow.md         # 写入工具与 Shell 命令流程
     ├── skill-flow.md               # Skill 系统实现流程
     ├── skill-plan.md               # Skill 系统设计计划
+    ├── global-install.md           # 全局安装与配置指南
     └── testing.md                  # 测试机制说明
 ```
 

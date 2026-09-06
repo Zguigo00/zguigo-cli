@@ -2,6 +2,7 @@ import type { Message } from '../model/types.js';
 import type { ModelClient } from '../model/types.js';
 import type { CompressionConfig } from '../context/index.js';
 import { compressMessages } from '../context/index.js';
+import type { CommandRegistry } from '../skills/index.js';
 
 /** 内置命令定义 */
 export interface Command {
@@ -15,6 +16,7 @@ export interface CommandContext {
   clearMessages: () => void;
   client?: ModelClient;
   compressionConfig?: CompressionConfig;
+  commandRegistry?: CommandRegistry;
 }
 
 /** 内置命令列表 */
@@ -22,15 +24,20 @@ export const commands: Command[] = [
   {
     name: '/help',
     description: '显示帮助信息',
-    handler: () => {
+    handler: (ctx) => {
       console.log(`
 zguigo - 终端 AI 编程助手
 
 内置命令:
-  /help     显示此帮助信息
-  /clear    清空对话历史
-  /compact  压缩对话历史（释放上下文空间）
-  /exit     退出程序
+  /help       显示此帮助信息
+  /clear      清空对话历史
+  /compact    压缩对话历史（释放上下文空间）
+  /commands   列出可用的 Skill 命令
+  /exit       退出程序
+
+Skill 命令:
+  /command-name 任务描述  执行对应的 Skill 命令
+  例如: /review src/app.ts  执行代码审查
 
 直接输入文本即可与 AI 对话。
 按 Ctrl+C 退出。
@@ -79,6 +86,31 @@ zguigo - 终端 AI 编程助手
       } catch (err) {
         console.error('压缩失败:', err instanceof Error ? err.message : String(err));
       }
+    },
+  },
+  {
+    name: '/commands',
+    description: '列出可用的 Skill 命令',
+    handler: async (ctx) => {
+      if (!ctx.commandRegistry) {
+        console.log('命令注册表未初始化。');
+        return;
+      }
+
+      const cmds = await ctx.commandRegistry.list();
+      if (cmds.length === 0) {
+        console.log('没有可用的 Skill 命令。');
+        return;
+      }
+
+      console.log('\n可用的 Skill 命令:\n');
+      for (const cmd of cmds) {
+        const readOnlyTag = cmd.readOnly ? ' [只读]' : '';
+        const sourceTag = cmd.source === 'file' ? ' (文件)' : '';
+        console.log(`  /${cmd.name}${sourceTag}${readOnlyTag}`);
+        console.log(`    ${cmd.description}`);
+      }
+      console.log('');
     },
   },
 ];

@@ -16,6 +16,10 @@ export interface RunAgentOptions {
   compressionConfig?: CompressionConfig;
   /** 工具确认回调，返回 true 允许执行，false 拒绝 */
   confirmToolCall?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>;
+  /** 只读模式下禁止的工具列表 */
+  readOnlyTools?: string[];
+  /** Skill 指令，注入到 system message 之前 */
+  skillInstruction?: string;
 }
 
 /**
@@ -28,7 +32,7 @@ export interface RunAgentOptions {
  * 4. 达到 8 轮上限 → 强制停止
  */
 export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
-  const { client, tools, onEvent, debug } = options;
+  const { client, tools, onEvent, debug, readOnlyTools } = options;
   const messages = options.messages;
 
   const state: AgentState = {
@@ -43,6 +47,26 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
   const emit = (event: AgentEvent) => {
     onEvent?.(event);
   };
+
+  // 注入 Skill 指令到 system message
+  if (options.skillInstruction) {
+    // 找到第一个 system message，在其前面插入 skill 指令
+    const systemIndex = messages.findIndex(m => m.role === 'system');
+    const skillMessage: Message = {
+      role: 'system',
+      content: options.skillInstruction,
+    };
+
+    if (systemIndex >= 0) {
+      messages.splice(systemIndex, 0, skillMessage);
+    } else {
+      messages.unshift(skillMessage);
+    }
+
+    if (debug) {
+      console.error(`[debug] 注入 Skill 指令`);
+    }
+  }
 
   while (!state.stopped) {
     state.iteration++;
@@ -163,6 +187,18 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
             tool_call_id: tc.id,
           });
           emit({ type: 'error', message: errorMsg });
+          continue;
+        }
+
+        // 只读模式检查
+        if (readOnlyTools?.includes(tc.name)) {
+          const rejectMsg = `只读模式下禁止执行: ${tc.name}`;
+          messages.push({
+            role: 'tool',
+            content: JSON.stringify({ success: false, error: rejectMsg }),
+            tool_call_id: tc.id,
+          });
+          emit({ type: 'tool_result', name: tc.name, success: false, data: rejectMsg });
           continue;
         }
 

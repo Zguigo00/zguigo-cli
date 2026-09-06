@@ -7,6 +7,14 @@ import { runAgent } from '../agent/loop.js';
 import { DebugLogger } from '../debug/logger.js';
 import { loadModelConfig } from '../model/config.js';
 import type { CompressionConfig } from '../context/index.js';
+import { CommandRegistry, KnowledgeLoader } from '../skills/index.js';
+import { reviewCommand } from '../skills/built-in/review.js';
+import { testCommand } from '../skills/built-in/test.js';
+import { explainCommand } from '../skills/built-in/explain.js';
+import { refactorCommand } from '../skills/built-in/refactor.js';
+
+/** 只读模式下禁止的工具列表 */
+const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
 
 export interface ReplOptions {
   client: ModelClient;
@@ -24,6 +32,33 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const commandNames = getCommandNames();
   const logger = new DebugLogger(debugMode ?? false);
 
+  // 初始化 Skill 系统
+  const projectRoot = process.cwd();
+  const commandRegistry = new CommandRegistry(projectRoot);
+  const knowledgeLoader = new KnowledgeLoader(projectRoot);
+
+  // 注册内置命令
+  commandRegistry.register(reviewCommand);
+  commandRegistry.register(testCommand);
+  commandRegistry.register(explainCommand);
+  commandRegistry.register(refactorCommand);
+
+  // 加载 Knowledge 并注入到 system message
+  const knowledge = await knowledgeLoader.loadAll();
+  if (knowledge) {
+    // 获取当前 system message 或创建新的
+    const systemMsg = messages.find(m => m.role === 'system');
+    if (systemMsg) {
+      systemMsg.content += '\n\n' + knowledge;
+    }
+    logger.log('已加载 Skills 知识');
+  }
+
+  // 获取所有可用命令名（用于 Tab 补全）
+  const allCommands = await commandRegistry.list();
+  const skillCommandNames = allCommands.map(c => `/${c.name}`);
+  const allCommandNames = [...commandNames, ...skillCommandNames];
+
   // 加载压缩配置
   const modelConfig = loadModelConfig();
   const compressionConfig: CompressionConfig = {
@@ -36,8 +71,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     input: process.stdin,
     output: process.stdout,
     completer: (line: string) => {
-      const hits = commandNames.filter((c) => c.startsWith(line));
-      return [hits.length ? hits : commandNames, line];
+      const hits = allCommandNames.filter((c) => c.startsWith(line));
+      return [hits.length ? hits : allCommandNames, line];
     },
   });
 
@@ -70,8 +105,93 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       if (!trimmed) continue;
 
       // 处理内置命令
-      const handled = await handleCommand(trimmed, { messages, clearMessages, client, compressionConfig });
+      const handled = await handleCommand(trimmed, {
+        messages,
+        clearMessages,
+        client,
+        compressionConfig,
+        commandRegistry,
+      });
       if (handled) continue;
+
+      // 检测 Skill 命令 (/command-name 任务描述)
+      const skillMatch = trimmed.match(/^\/(\w+)\s*(.*)/);
+      if (skillMatch) {
+        const commandName = skillMatch[1];
+        const args = skillMatch[2].trim();
+
+        const command = await commandRegistry.get(commandName);
+        if (command) {
+          // 替换 $ARGUMENTS 占位符
+          const instruction = command.instruction.replace(/\$ARGUMENTS/g, args || '（未指定目标）');
+
+          // 注入为系统消息
+          messages.push({ role: 'system', content: instruction });
+
+          // 添加用户任务
+          if (args) {
+            messages.push({ role: 'user', content: args });
+          }
+
+          logger.log(`执行 Skill 命令: /${commandName}${command.readOnly ? ' (只读)' : ''}`);
+
+          await runAgent({
+            client,
+            tools,
+            messages,
+            debug: debugMode,
+            compressionConfig,
+            readOnlyTools: command.readOnly ? READ_ONLY_TOOLS : undefined,
+            confirmToolCall: async (toolName, args) => {
+              const tool = tools.get(toolName);
+              const msg = tool?.confirmMessage
+                ? tool.confirmMessage(args)
+                : `即将执行: ${toolName}`;
+              return askConfirm(msg);
+            },
+            onEvent: (event) => {
+              switch (event.type) {
+                case 'text':
+                  process.stdout.write(event.content);
+                  break;
+                case 'tool_call':
+                  logger.toolCall(event.name, event.args);
+                  break;
+                case 'tool_result':
+                  logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+                  if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
+                    console.log(`\n[文件变更] ${event.data ?? ''}`);
+                  }
+                  if (event.name === 'run_command' && event.success) {
+                    console.log(`\n[命令输出] ${event.data ?? ''}`);
+                  }
+                  break;
+                case 'iteration':
+                  logger.iteration(event.number);
+                  break;
+                case 'error':
+                  logger.error(event.message);
+                  break;
+                case 'done':
+                  if (event.answer) {
+                    process.stdout.write('\n');
+                  }
+                  break;
+                case 'compress':
+                  if (debugMode) {
+                    logger.iteration(0);
+                  }
+                  console.log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
+                  break;
+                case 'command':
+                  // 通知模型已进入命令模式
+                  break;
+              }
+            },
+          });
+          continue;
+        }
+      }
 
       // 普通消息 → Agent Loop
       messages.push({ role: 'user', content: trimmed });

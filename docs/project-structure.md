@@ -100,6 +100,7 @@ zguigo_Cli/
     ├── global-install.md           # 全局安装与配置指南
     ├── plan-execute-design.md      # Plan and Execute 模式设计
     ├── plan-execute-flow.md        # Plan and Execute 实现流程
+    ├── agent-paradigms.md          # Agent 范式对比（ReAct/Plan/Reflection）
     └── testing.md                  # 测试机制说明
 ```
 

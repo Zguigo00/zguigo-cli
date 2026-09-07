@@ -101,6 +101,7 @@ zguigo_Cli/
     ├── plan-execute-design.md      # Plan and Execute 模式设计
     ├── plan-execute-flow.md        # Plan and Execute 实现流程
     ├── agent-paradigms.md          # Agent 范式对比（ReAct/Plan/Reflection）
+    ├── skill-vs-plan-execute.md    # Skill vs Plan and Execute 方案对比
     └── testing.md                  # 测试机制说明
 ```
 

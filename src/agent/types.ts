@@ -20,7 +20,14 @@ export type AgentEvent =
   | { type: 'done'; answer: string | null }
   | { type: 'compress'; beforeTokens: number; afterTokens: number }
   | { type: 'confirm'; toolName: string; message: string }
-  | { type: 'command'; name: string; readOnly: boolean };
+  | { type: 'command'; name: string; readOnly: boolean }
+  | { type: 'plan_start' }
+  | { type: 'plan_complete'; tasks: Array<{ id: string; title: string; description: string }> }
+  | { type: 'task_start'; taskId: string; taskTitle: string; index: number; total: number }
+  | { type: 'task_complete'; taskId: string; taskTitle: string; result: string }
+  | { type: 'task_failed'; taskId: string; taskTitle: string; error: string }
+  | { type: 'task_skipped'; taskId: string; taskTitle: string; reason: string }
+  | { type: 'all_done'; stats: { total: number; completed: number; failed: number; skipped: number } };
 
 /** Agent 事件回调 */
 export type AgentEventCallback = (event: AgentEvent) => void;

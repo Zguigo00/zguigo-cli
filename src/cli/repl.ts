@@ -4,6 +4,7 @@ import type { Message } from '../model/types.js';
 import type { ModelClient } from '../model/types.js';
 import type { ToolRegistry } from '../tools/protocol.js';
 import { runAgent } from '../agent/loop.js';
+import { runPlan } from '../agent/plan-loop.js';
 import { DebugLogger } from '../debug/logger.js';
 import { loadModelConfig } from '../model/config.js';
 import type { CompressionConfig } from '../context/index.js';
@@ -12,6 +13,7 @@ import { reviewCommand } from '../skills/built-in/review.js';
 import { testCommand } from '../skills/built-in/test.js';
 import { explainCommand } from '../skills/built-in/explain.js';
 import { refactorCommand } from '../skills/built-in/refactor.js';
+import { TaskManager } from '../tasks/manager.js';
 
 /** 只读模式下禁止的工具列表 */
 const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
@@ -121,6 +123,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const projectRoot = process.cwd();
   const commandRegistry = new CommandRegistry(projectRoot);
   const knowledgeLoader = new KnowledgeLoader(projectRoot);
+  const taskManager = new TaskManager();
 
   // 注册内置命令
   commandRegistry.register(reviewCommand);
@@ -289,8 +292,214 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         client,
         compressionConfig,
         commandRegistry,
+        taskManager,
       });
       if (handled) continue;
+
+      // 处理 /plan 命令
+      if (trimmed.startsWith('/plan ')) {
+        const task = trimmed.slice(6).trim();
+        if (!task) {
+          console.log('请提供任务描述，例如: /plan 重构认证模块');
+          continue;
+        }
+
+        logger.log(`启动 Plan 模式: ${task}`);
+
+        // 将任务添加到消息历史
+        messages.push({ role: 'user', content: task });
+
+        try {
+          const manager = await runPlan({
+            client,
+            tools,
+            messages,
+            debug: debugMode,
+            compressionConfig,
+            confirmToolCall: async (toolName, args) => {
+              const tool = tools.get(toolName);
+              const msg = tool?.confirmMessage
+                ? tool.confirmMessage(args)
+                : `即将执行: ${toolName}`;
+              return askConfirm(msg);
+            },
+            onEvent: (event) => {
+              switch (event.type) {
+                case 'text':
+                  process.stdout.write(event.content);
+                  break;
+                case 'tool_call':
+                  logger.toolCall(event.name, event.args);
+                  break;
+                case 'tool_result':
+                  logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+                  if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
+                    console.log(`\n[文件变更] ${event.data ?? ''}`);
+                  }
+                  if (event.name === 'run_command' && event.success) {
+                    console.log(`\n[命令输出] ${event.data ?? ''}`);
+                  }
+                  break;
+                case 'iteration':
+                  logger.iteration(event.number);
+                  break;
+                case 'error':
+                  logger.error(event.message);
+                  break;
+                case 'done':
+                  if (event.answer) {
+                    process.stdout.write('\n');
+                  }
+                  break;
+                case 'compress':
+                  if (debugMode) {
+                    logger.iteration(0);
+                  }
+                  console.log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
+                  break;
+                case 'command':
+                  break;
+              }
+            },
+            onTaskEvent: (event) => {
+              switch (event.type) {
+                case 'plan_start':
+                  console.log('\n📋 正在生成任务计划...');
+                  break;
+                case 'plan_complete':
+                  console.log(`\n✓ 任务计划已生成，共 ${event.plan.tasks.length} 个任务\n`);
+                  // 显示任务列表
+                  event.plan.tasks.forEach((t, i) => {
+                    console.log(`  ${i + 1}. ${t.title}`);
+                  });
+                  console.log('\n输入 /run 开始执行任务，或 /tasks 查看任务列表\n');
+                  break;
+                case 'task_start':
+                  console.log(`\n[${event.task.index + 1}/${event.task.total}] ${event.task.title}`);
+                  break;
+                case 'task_complete':
+                  console.log(`✓ ${event.task.title} 完成`);
+                  break;
+                case 'task_failed':
+                  console.log(`✗ ${event.task.title} 失败: ${event.task.error}`);
+                  break;
+                case 'task_skipped':
+                  console.log(`- ${event.task.title} 跳过: ${event.task.reason}`);
+                  break;
+                case 'all_done':
+                  console.log(`\n🎉 所有任务执行完成！`);
+                  console.log(`   ${event.stats.completed}/${event.stats.total} 成功`);
+                  if (event.stats.failed > 0) {
+                    console.log(`   ${event.stats.failed} 个失败`);
+                  }
+                  break;
+              }
+            },
+          });
+
+          // 更新全局 taskManager
+          if (manager.count > 0) {
+            // 将 manager 的任务复制到全局 taskManager
+            for (const t of manager.getTasks()) {
+              taskManager.addTask(t.title, t.description, t.dependencies);
+            }
+          }
+        } catch (err) {
+          console.error('Plan 执行失败:', err instanceof Error ? err.message : String(err));
+        }
+        continue;
+      }
+
+      // 处理 /run 命令
+      if (trimmed === '/run') {
+        if (taskManager.count === 0) {
+          console.log('任务列表为空。使用 /plan 创建任务计划。');
+          continue;
+        }
+
+        logger.log('开始执行任务列表');
+
+        // 逐个执行任务
+        while (true) {
+          const task = taskManager.nextTask();
+          if (!task) break;
+
+          const currentIndex = taskManager.getCurrentIndex();
+          const totalTasks = taskManager.count;
+
+          console.log(`\n[${currentIndex + 1}/${totalTasks}] ${task.title}`);
+
+          // 将任务描述添加到消息
+          messages.push({ role: 'user', content: `执行任务: ${task.title}\n${task.description}` });
+
+          try {
+            await runAgent({
+              client,
+              tools,
+              messages,
+              debug: debugMode,
+              compressionConfig,
+              confirmToolCall: async (toolName, args) => {
+                const tool = tools.get(toolName);
+                const msg = tool?.confirmMessage
+                  ? tool.confirmMessage(args)
+                  : `即将执行: ${toolName}`;
+                return askConfirm(msg);
+              },
+              onEvent: (event) => {
+                switch (event.type) {
+                  case 'text':
+                    process.stdout.write(event.content);
+                    break;
+                  case 'tool_call':
+                    logger.toolCall(event.name, event.args);
+                    break;
+                  case 'tool_result':
+                    logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+                    if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
+                      console.log(`\n[文件变更] ${event.data ?? ''}`);
+                    }
+                    if (event.name === 'run_command' && event.success) {
+                      console.log(`\n[命令输出] ${event.data ?? ''}`);
+                    }
+                    break;
+                  case 'iteration':
+                    logger.iteration(event.number);
+                    break;
+                  case 'error':
+                    logger.error(event.message);
+                    break;
+                  case 'done':
+                    if (event.answer) {
+                      taskManager.completeCurrentTask(event.answer);
+                      console.log(`\n✓ 任务完成`);
+                    }
+                    break;
+                  case 'compress':
+                    if (debugMode) {
+                      logger.iteration(0);
+                    }
+                    console.log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
+                    break;
+                }
+              },
+            });
+          } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            taskManager.failCurrentTask(error);
+            console.log(`\n✗ 任务失败: ${error}`);
+            break;
+          }
+        }
+
+        // 显示统计
+        const stats = taskManager.getStats();
+        console.log(`\n执行完成: ${stats.completed}/${stats.total} 成功`);
+        if (stats.failed > 0) {
+          console.log(`   ${stats.failed} 个失败`);
+        }
+        continue;
+      }
 
       // 检测 Skill 命令 (/command-name 任务描述)
       const skillMatch = trimmed.match(/^\/(\w+)\s*(.*)/);

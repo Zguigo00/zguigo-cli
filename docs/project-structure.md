@@ -2,7 +2,7 @@
 
 ## 功能概述
 
-zguigo 是一个终端 AI 编程助手，通过 OpenAI 兼容接口接入小米 MiMo 模型，实现流式对话、工具调用、上下文压缩、文件写入、Shell 命令执行和 Skill 命令系统。
+zguigo 是一个终端 AI 编程助手，通过 OpenAI 兼容接口接入小米 MiMo 模型，实现流式对话、工具调用、上下文压缩、文件写入、Shell 命令执行、Skill 命令系统和 Plan and Execute 模式。
 
 ## 目录结构
 
@@ -19,11 +19,12 @@ zguigo_Cli/
 │   ├── agent/
 │   │   ├── index.ts      # 公共导出
 │   │   ├── loop.ts       # Agent Loop 核心循环
+│   │   ├── plan-loop.ts  # Plan and Execute 模式循环
 │   │   └── types.ts      # Agent 状态和事件类型
 │   ├── cli/
 │   │   ├── index.ts      # 公共导出
-│   │   ├── repl.ts       # REPL 交互界面（含确认提示、Skill 触发）
-│   │   ├── commands.ts   # 内置命令（/help, /clear, /compact, /commands, /exit）
+│   │   ├── repl.ts       # REPL 交互界面（含确认提示、Skill 触发、Plan 模式）
+│   │   ├── commands.ts   # 内置命令（/help, /clear, /compact, /commands, /exit, /plan, /tasks, /run）
 │   │   └── render.ts     # 输出渲染
 │   ├── context/
 │   │   ├── index.ts      # 公共导出
@@ -48,6 +49,11 @@ zguigo_Cli/
 │   │       ├── test.ts     # /test 生成测试
 │   │       ├── explain.ts  # /explain 解释代码（只读）
 │   │       └── refactor.ts # /refactor 重构代码
+│   ├── tasks/            # 任务系统
+│   │   ├── index.ts      # 公共导出
+│   │   ├── protocol.ts   # Task 接口定义
+│   │   ├── manager.ts    # TaskManager 任务管理器
+│   │   └── prompts.ts    # 任务生成/执行 Prompt 模板
 │   ├── tools/
 │   │   ├── index.ts      # 工具注册表（6个工具）
 │   │   ├── protocol.ts   # ToolRegistry 接口 + Tool 接口
@@ -92,6 +98,8 @@ zguigo_Cli/
     ├── skill-flow.md               # Skill 系统实现流程
     ├── skill-plan.md               # Skill 系统设计计划
     ├── global-install.md           # 全局安装与配置指南
+    ├── plan-execute-design.md      # Plan and Execute 模式设计
+    ├── plan-execute-flow.md        # Plan and Execute 实现流程
     └── testing.md                  # 测试机制说明
 ```
 
@@ -116,6 +124,20 @@ zguigo_Cli/
 | `/refactor` | 内置 | ❌ | 重构代码，提升可读性 |
 | 自定义命令 | 文件 | 可选 | `.zguigo/commands/*.md`，使用 `$ARGUMENTS` 占位符 |
 
+## Plan and Execute 命令
+
+| 命令 | 说明 |
+|------|------|
+| `/plan` | 启动 Plan 模式，生成任务列表 |
+| `/tasks` | 显示当前任务列表 |
+| `/run` | 开始执行任务列表 |
+| `/task-done` | 标记当前任务完成 |
+| `/task-fail` | 标记当前任务失败 |
+| `/task-skip` | 跳过当前任务 |
+| `/task-add` | 添加新任务 |
+| `/task-remove` | 删除任务 |
+| `/clear-tasks` | 清空任务列表 |
+
 ## 功能实现状态
 
 | 功能 | 状态 | 说明 |
@@ -130,6 +152,7 @@ zguigo_Cli/
 | 上下文压缩 | ✅ | 滑动窗口 + 模型摘要，自动/手动触发 |
 | Skill 命令 | ✅ | /review, /test, /explain, /refactor + 自定义命令 |
 | Skills 知识 | ✅ | 启动时自动加载 `.zguigo/skills/*.md` |
+| Plan and Execute | ✅ | 任务规划与执行，支持依赖关系 |
 | --debug 模式 | ✅ | 输出调用细节、耗时、token 数 |
 
 ## 测试覆盖

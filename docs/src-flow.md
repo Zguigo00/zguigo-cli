@@ -85,3 +85,87 @@ tools/read-file.ts 读取文件内容
   ↓
 cli/render.ts 流式输出到终端
 ```
+
+## Plan and Execute 模式
+
+### 核心文件
+
+**src/agent/plan-loop.ts** — Plan and Execute 循环：
+- `runPlan()` 函数：执行完整的 Plan and Execute 流程
+- Phase 1: 调用模型生成任务计划（JSON 格式）
+- Phase 2: 逐个执行任务，更新状态
+
+**src/tasks/protocol.ts** — 任务接口：
+- `Task` 接口：id、title、description、status、dependencies
+- `TaskStatus` 类型：pending/in_progress/completed/failed/skipped
+- `TaskPlan` 接口：tasks 数组 + 原始任务描述
+
+**src/tasks/manager.ts** — 任务管理器：
+- `TaskManager` 类：管理任务生命周期
+- 核心方法：addTask()、nextTask()、completeCurrentTask()、failCurrentTask()
+- 依赖关系检查：确保前置任务完成后才执行后续任务
+
+**src/tasks/prompts.ts** — Prompt 模板：
+- `PLAN_SYSTEM_PROMPT`：引导模型拆分任务为 JSON 格式
+- `EXECUTE_SYSTEM_PROMPT`：引导模型执行单个任务
+- `getPlanUserPrompt()`：生成 Plan 阶段的用户消息
+- `getExecuteUserPrompt()`：生成 Execute 阶段的用户消息
+
+### 调用链
+
+```
+用户: /plan 重构认证模块
+  ↓
+repl.ts 检测到 /plan 命令
+  ↓
+调用 runPlan() 函数
+  ↓
+agent/plan-loop.ts Phase 1: 生成任务计划
+  ↓
+model/client.ts 调用模型，使用 PLAN_SYSTEM_PROMPT
+  ↓
+模型返回 JSON 格式的任务列表
+  ↓
+parsePlanFromText() 解析 JSON
+  ↓
+TaskManager.loadFromPlan() 加载任务
+  ↓
+agent/plan-loop.ts Phase 2: 执行任务
+  ↓
+循环调用 agent/loop.ts 执行每个任务
+  ↓
+TaskManager 更新任务状态
+  ↓
+任务全部完成后返回
+```
+
+### 任务状态流转
+
+```
+pending → in_progress → completed
+                     → failed
+                     → skipped
+```
+
+- `pending`: 待执行
+- `in_progress`: 正在执行
+- `completed`: 执行完成
+- `failed`: 执行失败（停止后续任务）
+- `skipped`: 跳过
+
+### 依赖关系
+
+任务之间可以有依赖关系：
+
+```typescript
+interface Task {
+  id: string;
+  title: string;
+  description: string;
+  dependencies: string[];  // 依赖的任务 ID 列表
+}
+```
+
+`TaskManager.nextTask()` 会检查依赖是否满足：
+- 只有当所有依赖任务都已完成时，才会执行当前任务
+- 如果依赖任务失败，后续任务不会执行

@@ -28,17 +28,28 @@ describe('KnowledgeLoader', () => {
     });
 
     it('应该返回空字符串（无 .md 文件）', async () => {
-      mockReaddir.mockResolvedValue(['readme.txt', 'other.js'] as any);
+      mockReaddir.mockResolvedValue([] as any);
 
       const result = await loader.loadAll();
       expect(result).toBe('');
     });
 
     it('应该加载并拼接 .md 文件内容', async () => {
-      // 第一次调用是用户目录（空），第二次是项目目录
+      // Mock Dirent 对象
+      const createDirent = (name: string, isDir: boolean) => ({
+        name,
+        isDirectory: () => isDir,
+        isFile: () => !isDir,
+      });
+
+      // 用户目录为空，项目目录有两个 .md 文件
       mockReaddir
         .mockResolvedValueOnce([] as any)  // 用户目录为空
-        .mockResolvedValueOnce(['deploy.md', 'style.md'] as any);  // 项目目录有文件
+        .mockResolvedValueOnce([
+          createDirent('deploy.md', false),
+          createDirent('style.md', false),
+        ] as any);  // 项目目录有文件
+
       mockReadFile
         .mockResolvedValueOnce('# 部署流程\n\nnpm run build')
         .mockResolvedValueOnce('# 代码风格\n\n使用严格模式');
@@ -51,7 +62,19 @@ describe('KnowledgeLoader', () => {
     });
 
     it('应该跳过无法读取的文件', async () => {
-      mockReaddir.mockResolvedValue(['good.md', 'bad.md'] as any);
+      const createDirent = (name: string, isDir: boolean) => ({
+        name,
+        isDirectory: () => isDir,
+        isFile: () => !isDir,
+      });
+
+      mockReaddir
+        .mockResolvedValueOnce([] as any)  // 用户目录为空
+        .mockResolvedValueOnce([
+          createDirent('good.md', false),
+          createDirent('bad.md', false),
+        ] as any);  // 项目目录有文件
+
       mockReadFile
         .mockResolvedValueOnce('# 好的文件')
         .mockRejectedValueOnce(new Error('读取失败'));

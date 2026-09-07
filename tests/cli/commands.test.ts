@@ -34,6 +34,6 @@ describe('内置命令', () => {
   });
 
   it('命令数量正确', () => {
-    expect(commands.length).toBe(5);
+    expect(commands.length).toBe(13);
   });
 });

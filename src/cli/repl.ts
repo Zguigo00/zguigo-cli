@@ -26,6 +26,21 @@ interface CommandInfo {
 }
 
 /**
+ * 生成进度条
+ * @param current 当前步骤（从 0 开始）
+ * @param total 总步骤数
+ * @param width 进度条宽度（字符数）
+ * @returns 进度条字符串
+ */
+function generateProgressBar(current: number, total: number, width: number = 20): string {
+  const progress = Math.round((current / total) * 100);
+  const filled = Math.floor((current / total) * width);
+  const empty = width - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  return `${bar} ${progress}%`;
+}
+
+/**
  * 交互式命令选择菜单
  * 使用上下箭头选择，回车确认
  */
@@ -375,22 +390,29 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                   console.log('\n输入 /run 开始执行任务，或 /tasks 查看任务列表\n');
                   break;
                 case 'task_start':
+                  const progressBar = generateProgressBar(event.task.index, event.task.total);
                   console.log(`\n[${event.task.index + 1}/${event.task.total}] ${event.task.title}`);
+                  console.log(`   ${progressBar}`);
                   break;
                 case 'task_complete':
-                  console.log(`✓ ${event.task.title} 完成`);
+                  console.log(`   ✓ 完成`);
                   break;
                 case 'task_failed':
-                  console.log(`✗ ${event.task.title} 失败: ${event.task.error}`);
+                  console.log(`   ✗ 失败: ${event.task.error}`);
                   break;
                 case 'task_skipped':
-                  console.log(`- ${event.task.title} 跳过: ${event.task.reason}`);
+                  console.log(`   - 跳过: ${event.task.reason}`);
                   break;
                 case 'all_done':
+                  const finalProgress = generateProgressBar(event.stats.total, event.stats.total);
                   console.log(`\n🎉 所有任务执行完成！`);
+                  console.log(`   ${finalProgress}`);
                   console.log(`   ${event.stats.completed}/${event.stats.total} 成功`);
                   if (event.stats.failed > 0) {
                     console.log(`   ${event.stats.failed} 个失败`);
+                  }
+                  if (event.stats.skipped > 0) {
+                    console.log(`   ${event.stats.skipped} 个跳过`);
                   }
                   break;
               }
@@ -419,6 +441,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
         logger.log('开始执行任务列表');
 
+        // 显示开始执行
+        console.log('\n🚀 开始执行任务列表...\n');
+
         // 逐个执行任务
         while (true) {
           const task = taskManager.nextTask();
@@ -426,8 +451,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
           const currentIndex = taskManager.getCurrentIndex();
           const totalTasks = taskManager.count;
+          const progressBar = generateProgressBar(currentIndex, totalTasks);
 
-          console.log(`\n[${currentIndex + 1}/${totalTasks}] ${task.title}`);
+          console.log(`[${currentIndex + 1}/${totalTasks}] ${task.title}`);
+          console.log(`   ${progressBar}`);
 
           // 将任务描述添加到消息
           messages.push({ role: 'user', content: `执行任务: ${task.title}\n${task.description}` });
@@ -472,7 +499,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                   case 'done':
                     if (event.answer) {
                       taskManager.completeCurrentTask(event.answer);
-                      console.log(`\n✓ 任务完成`);
+                      console.log(`\n   ✓ 完成`);
                     }
                     break;
                   case 'compress':
@@ -494,9 +521,15 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
         // 显示统计
         const stats = taskManager.getStats();
-        console.log(`\n执行完成: ${stats.completed}/${stats.total} 成功`);
+        const finalProgressBar = generateProgressBar(stats.total, stats.total);
+        console.log(`\n🎉 执行完成！`);
+        console.log(`   ${finalProgressBar}`);
+        console.log(`   ${stats.completed}/${stats.total} 成功`);
         if (stats.failed > 0) {
           console.log(`   ${stats.failed} 个失败`);
+        }
+        if (stats.skipped > 0) {
+          console.log(`   ${stats.skipped} 个跳过`);
         }
         continue;
       }

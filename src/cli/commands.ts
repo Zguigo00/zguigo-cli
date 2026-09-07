@@ -5,6 +5,21 @@ import { compressMessages } from '../context/index.js';
 import type { CommandRegistry } from '../skills/index.js';
 import type { TaskManager } from '../tasks/manager.js';
 
+/**
+ * 生成进度条
+ * @param current 当前步骤（从 0 开始）
+ * @param total 总步骤数
+ * @param width 进度条宽度（字符数）
+ * @returns 进度条字符串
+ */
+function generateProgressBar(current: number, total: number, width: number = 20): string {
+  const progress = Math.round((current / total) * 100);
+  const filled = Math.floor((current / total) * width);
+  const empty = width - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  return `${bar} ${progress}%`;
+}
+
 /** 内置命令定义 */
 export interface Command {
   name: string;
@@ -162,6 +177,7 @@ Skill 命令:
 
       const currentIndex = ctx.taskManager.getCurrentIndex();
       const stats = ctx.taskManager.getStats();
+      const progressBar = generateProgressBar(stats.completed, stats.total);
 
       console.log(`\n任务列表 (共 ${stats.total} 个):\n`);
 
@@ -190,7 +206,8 @@ Skill 命令:
         console.log(`  ${status} ${task.title}${marker}`);
       });
 
-      console.log(`\n统计: ${stats.completed} 完成, ${stats.failed} 失败, ${stats.skipped} 跳过, ${stats.pending} 待执行\n`);
+      console.log(`\n进度: ${progressBar}`);
+      console.log(`统计: ${stats.completed} 完成, ${stats.failed} 失败, ${stats.skipped} 跳过, ${stats.pending} 待执行\n`);
     },
   },
   {

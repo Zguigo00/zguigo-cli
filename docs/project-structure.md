@@ -23,9 +23,14 @@ zguigo_Cli/
 │   │   └── types.ts      # Agent 状态和事件类型
 │   ├── cli/
 │   │   ├── index.ts      # 公共导出
-│   │   ├── repl.ts       # REPL 交互界面（含确认提示、Skill 触发、Plan 模式）
-│   │   ├── commands.ts   # 内置命令（/help, /clear, /compact, /commands, /exit, /plan, /tasks, /run）
+│   │   ├── repl.ts       # REPL 交互界面（含确认提示、Skill 触发、Plan 模式、聊天记录）
+│   │   ├── commands.ts   # 内置命令（18个：/help, /clear, /compact, /commands, /exit, /plan, /tasks, /run, /task-*, /history, /save, /new, /undo, /rollback）
 │   │   └── render.ts     # 输出渲染
+│   ├── history/          # 聊天记录与快照回滚
+│   │   ├── index.ts      # 公共导出
+│   │   ├── protocol.ts   # ChatSession、SnapshotEntry 等接口
+│   │   ├── chat-history.ts # JsonChatHistory（JSON 文件存储）
+│   │   └── git-snapshot.ts # GitSnapshot（Git 快照回滚）
 │   ├── context/
 │   │   ├── index.ts      # 公共导出
 │   │   ├── compress.ts   # 上下文压缩核心逻辑
@@ -102,6 +107,7 @@ zguigo_Cli/
     ├── plan-execute-flow.md        # Plan and Execute 实现流程
     ├── agent-paradigms.md          # Agent 范式对比（ReAct/Plan/Reflection）
     ├── skill-vs-plan-execute.md    # Skill vs Plan and Execute 方案对比
+    ├── history-rollback-flow.md    # 聊天记录与 Git 快照回滚实现流程
     └── testing.md                  # 测试机制说明
 ```
 
@@ -140,6 +146,16 @@ zguigo_Cli/
 | `/task-remove` | 删除任务 |
 | `/clear-tasks` | 清空任务列表 |
 
+## 聊天记录与快照命令
+
+| 命令 | 说明 |
+|------|------|
+| `/history` | 显示历史会话列表 |
+| `/save` | 保存当前会话 |
+| `/new` | 创建新会话 |
+| `/undo` | 撤销最近一次文件变更 |
+| `/rollback` | 查看快照历史 |
+
 ## 功能实现状态
 
 | 功能 | 状态 | 说明 |
@@ -155,6 +171,8 @@ zguigo_Cli/
 | Skill 命令 | ✅ | /review, /test, /explain, /refactor + 自定义命令 |
 | Skills 知识 | ✅ | 启动时自动加载 `.zguigo/skills/*.md` |
 | Plan and Execute | ✅ | 任务规划与执行，支持依赖关系 |
+| 聊天记录 | ✅ | JSON 文件存储，多会话支持 |
+| Git 快照回滚 | ✅ | 写入工具执行前自动创建快照 |
 | --debug 模式 | ✅ | 输出调用细节、耗时、token 数 |
 
 ## 测试覆盖

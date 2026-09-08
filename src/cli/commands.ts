@@ -4,6 +4,7 @@ import type { CompressionConfig } from '../context/index.js';
 import { compressMessages } from '../context/index.js';
 import type { CommandRegistry } from '../skills/index.js';
 import type { TaskManager } from '../tasks/manager.js';
+import type { ChatHistoryManager, ChatSession, SnapshotManager } from '../history/protocol.js';
 
 /**
  * 生成进度条
@@ -34,6 +35,14 @@ export interface CommandContext {
   compressionConfig?: CompressionConfig;
   commandRegistry?: CommandRegistry;
   taskManager?: TaskManager;
+  /** 聊天历史管理器 */
+  chatHistory?: ChatHistoryManager;
+  /** 当前会话 */
+  currentSession?: ChatSession;
+  /** 切换当前会话 */
+  switchSession?: (session: ChatSession) => void;
+  /** Git 快照管理器 */
+  snapshotManager?: SnapshotManager;
 }
 
 /** 内置命令列表 */
@@ -298,6 +307,111 @@ Skill 命令:
 
       ctx.taskManager.clear();
       console.log('已清空任务列表。');
+    },
+  },
+  // ==================== 聊天记录命令 ====================
+  {
+    name: '/history',
+    description: '显示历史会话列表',
+    handler: async (ctx) => {
+      if (!ctx.chatHistory) {
+        console.log('聊天历史未配置。');
+        return;
+      }
+
+      const sessions = await ctx.chatHistory.listSessions();
+      if (sessions.length === 0) {
+        console.log('没有历史会话。');
+        return;
+      }
+
+      console.log('\n历史会话:\n');
+      sessions.forEach((s, i) => {
+        const date = new Date(s.updatedAt).toLocaleString('zh-CN');
+        const current = ctx.currentSession?.id === s.id ? ' ← 当前' : '';
+        const msgCount = s.metadata.messageCount;
+        console.log(`  ${i + 1}. [${s.id}] ${s.title} (${msgCount} 条消息, ${date})${current}`);
+      });
+      console.log('');
+    },
+  },
+  {
+    name: '/save',
+    description: '保存当前会话',
+    handler: async (ctx) => {
+      if (!ctx.chatHistory || !ctx.currentSession) {
+        console.log('聊天历史未配置。');
+        return;
+      }
+
+      await ctx.chatHistory.saveSession(ctx.currentSession);
+      console.log(`会话已保存: ${ctx.currentSession.title}`);
+    },
+  },
+  {
+    name: '/new',
+    description: '创建新会话',
+    handler: (ctx) => {
+      if (!ctx.chatHistory) {
+        console.log('聊天历史未配置。');
+        return;
+      }
+
+      const session = ctx.chatHistory.createSession();
+      ctx.switchSession?.(session);
+      console.log(`已创建新会话: ${session.title}`);
+    },
+  },
+  // ==================== 快照回滚命令 ====================
+  {
+    name: '/undo',
+    description: '撤销最近一次文件变更',
+    handler: async (ctx) => {
+      if (!ctx.snapshotManager) {
+        console.log('快照管理器未配置。');
+        return;
+      }
+
+      if (!ctx.snapshotManager.isGitRepo()) {
+        console.log('当前目录不是 Git 仓库，无法使用回滚功能。');
+        return;
+      }
+
+      try {
+        await ctx.snapshotManager.undo();
+        console.log('已撤销最近一次文件变更。');
+      } catch (err) {
+        console.error('撤销失败:', err instanceof Error ? err.message : String(err));
+      }
+    },
+  },
+  {
+    name: '/rollback',
+    description: '查看快照历史或回滚到指定版本',
+    handler: async (ctx) => {
+      if (!ctx.snapshotManager) {
+        console.log('快照管理器未配置。');
+        return;
+      }
+
+      if (!ctx.snapshotManager.isGitRepo()) {
+        console.log('当前目录不是 Git 仓库，无法使用回滚功能。');
+        return;
+      }
+
+      const history = await ctx.snapshotManager.getHistory(10);
+      if (history.length === 0) {
+        console.log('没有快照历史。');
+        return;
+      }
+
+      console.log('\n快照历史:\n');
+      history.forEach((entry, i) => {
+        const date = new Date(entry.timestamp).toLocaleString('zh-CN');
+        console.log(`  ${i + 1}. ${entry.hash.slice(0, 8)} — ${entry.message} (${date})`);
+      });
+      console.log('\n使用 /rollback <hash> 回滚到指定版本');
+      console.log('使用 /undo 撤销最近一次变更\n');
     },
   },
 ];

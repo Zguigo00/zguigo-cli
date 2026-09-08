@@ -14,6 +14,8 @@ import { testCommand } from '../skills/built-in/test.js';
 import { explainCommand } from '../skills/built-in/explain.js';
 import { refactorCommand } from '../skills/built-in/refactor.js';
 import { TaskManager } from '../tasks/manager.js';
+import { JsonChatHistory, GitSnapshot } from '../history/index.js';
+import type { ChatSession } from '../history/protocol.js';
 
 /** 只读模式下禁止的工具列表 */
 const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
@@ -139,6 +141,65 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const commandRegistry = new CommandRegistry(projectRoot);
   const knowledgeLoader = new KnowledgeLoader(projectRoot);
   const taskManager = new TaskManager();
+
+  // 初始化聊天历史和快照管理器
+  const chatHistory = new JsonChatHistory(projectRoot);
+  const snapshotManager = new GitSnapshot(projectRoot);
+  let currentSession: ChatSession = chatHistory.createSession();
+
+  // 会话切换函数
+  const switchSession = (session: ChatSession) => {
+    currentSession = session;
+    messages.length = 0;
+    messages.push(...session.messages.map(m => ({
+      role: m.role,
+      content: m.content,
+      tool_calls: m.tool_calls,
+      tool_call_id: m.tool_call_id,
+    })));
+  };
+
+  // 保存消息到会话
+  const saveToSession = (message: Message) => {
+    currentSession.messages.push({
+      ...message,
+      timestamp: Date.now(),
+    });
+    currentSession.updatedAt = Date.now();
+    if (message.role === 'assistant' && message.tool_calls) {
+      currentSession.metadata.toolCallCount += message.tool_calls.length;
+    }
+  };
+
+  // 自动保存（每 3 条消息保存一次）
+  let autoSaveCounter = 0;
+  const autoSave = async () => {
+    autoSaveCounter++;
+    if (autoSaveCounter % 3 === 0) {
+      await chatHistory.saveSession(currentSession);
+    }
+  };
+
+  // 快照管理器可用于写入工具
+  if (snapshotManager.isGitRepo()) {
+    logger.log('Git 快照已启用');
+
+    // 包装工具调用，写入类工具执行前自动创建快照
+    const originalCall = tools.call.bind(tools);
+    const WRITE_TOOLS = ['write_file', 'edit_file', 'create_directory'];
+    tools.call = async (name: string, args: Record<string, unknown>) => {
+      if (WRITE_TOOLS.includes(name)) {
+        try {
+          const desc = `${name}: ${(args.path as string) || ''}`;
+          await snapshotManager.createSnapshot(desc);
+          logger.log(`快照已创建: ${desc}`);
+        } catch (err) {
+          logger.log(`快照创建失败: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      return originalCall(name, args);
+    };
+  }
 
   // 注册内置命令
   commandRegistry.register(reviewCommand);
@@ -308,6 +369,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         compressionConfig,
         commandRegistry,
         taskManager,
+        chatHistory,
+        currentSession,
+        switchSession,
+        snapshotManager,
       });
       if (handled) continue;
 
@@ -615,6 +680,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
       // 普通消息 → Agent Loop
       messages.push({ role: 'user', content: trimmed });
+      saveToSession({ role: 'user', content: trimmed });
+      autoSave();
 
       await runAgent({
         client,
@@ -656,6 +723,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
             case 'done':
               if (event.answer) {
                 process.stdout.write('\n');
+                saveToSession({ role: 'assistant', content: event.answer });
+                autoSave();
               }
               break;
             case 'compress':
@@ -672,6 +741,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         break;
       }
       console.error('\n错误:', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // 退出时保存会话
+  if (currentSession.messages.length > 0) {
+    await chatHistory.saveSession(currentSession);
+    if (debugMode) {
+      console.error(`[debug] 会话已保存: ${currentSession.id}`);
     }
   }
 }

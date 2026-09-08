@@ -44,8 +44,8 @@ function generateProgressBar(current: number, total: number, width: number = 20)
 
 /**
  * 交互式命令选择菜单
- * 使用上下箭头选择，回车确认
- * 直接监听 stdin data 事件，手动解析方向键，兼容 Windows cmd.exe
+ * 显示编号列表，用户输入数字选择
+ * 兼容所有终端（Windows cmd.exe、PowerShell、Linux、Mac）
  */
 function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | null> {
   return new Promise((resolve) => {
@@ -54,130 +54,31 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
       return;
     }
 
-    let selectedIndex = 0;
-    let menuLines = 0;
-    let done = false;
-
     // 渲染菜单
-    const render = () => {
-      if (menuLines > 0) {
-        process.stdout.write(`\x1b[${menuLines}A`);
-        process.stdout.write('\x1b[0J');
-      }
-
-      let output = '';
-      output += '\r\x1b[36m选择命令 (↑↓ 移动, Enter 确认, Esc 取消):\x1b[0m\n';
-
-      for (let i = 0; i < commands.length; i++) {
-        const cmd = commands[i];
-        const prefix = i === selectedIndex ? '\x1b[32m❯\x1b[0m' : ' ';
-        const readOnlyTag = cmd.readOnly ? ' \x1b[90m[只读]\x1b[0m' : '';
-        const line = `  ${prefix} /${cmd.name}${readOnlyTag} - ${cmd.description}`;
-
-        if (i === selectedIndex) {
-          output += `\x1b[36m${line}\x1b[0m\n`;
-        } else {
-          output += `${line}\n`;
-        }
-      }
-
-      process.stdout.write(output);
-      menuLines = commands.length + 1;
-    };
-
-    const clearMenu = () => {
-      if (menuLines > 0) {
-        process.stdout.write(`\x1b[${menuLines}A`);
-        process.stdout.write('\x1b[0J');
-      }
-    };
-
-    const finish = (result: CommandInfo | null) => {
-      if (done) return;
-      done = true;
-      clearMenu();
-      process.stdin.removeListener('data', onData);
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-      }
-      process.stdin.pause();
-      resolve(result);
-    };
-
-    // 清除提示符行，渲染菜单
-    process.stdout.write('\r\x1b[K');
-    render();
-
-    // 监听原始输入
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
+    console.log('\x1b[36m选择命令 (输入编号，0 取消):\x1b[0m');
+    for (let i = 0; i < commands.length; i++) {
+      const cmd = commands[i];
+      const readOnlyTag = cmd.readOnly ? ' \x1b[90m[只读]\x1b[0m' : '';
+      console.log(`  \x1b[32m${i + 1}\x1b[0m. /${cmd.name}${readOnlyTag} - ${cmd.description}`);
     }
-    process.stdin.resume();
 
-    const onData = (buf: Buffer) => {
-      if (done) return;
-
-      for (let i = 0; i < buf.length; i++) {
-        const b = buf[i];
-
-        // Ctrl+C
-        if (b === 0x03) {
-          finish(null);
-          return;
-        }
-
-        // Esc
-        if (b === 0x1b) {
-          // 检查是否是转义序列的一部分（方向键）
-          if (i + 2 < buf.length && buf[i + 1] === 0x5b) {
-            const arrow = buf[i + 2];
-            if (arrow === 0x41) {
-              // 上
-              selectedIndex = Math.max(0, selectedIndex - 1);
-              render();
-              i += 2;
-              continue;
-            } else if (arrow === 0x42) {
-              // 下
-              selectedIndex = Math.min(commands.length - 1, selectedIndex + 1);
-              render();
-              i += 2;
-              continue;
-            }
-          }
-          // 单独的 Esc 键
-          finish(null);
-          return;
-        }
-
-        // Windows 方向键前缀 0xE0
-        if (b === 0xe0 && i + 1 < buf.length) {
-          const next = buf[i + 1];
-          if (next === 0x48) {
-            // 上
-            selectedIndex = Math.max(0, selectedIndex - 1);
-            render();
-            i++;
-            continue;
-          } else if (next === 0x50) {
-            // 下
-            selectedIndex = Math.min(commands.length - 1, selectedIndex + 1);
-            render();
-            i++;
-            continue;
-          }
-        }
-
-        // Enter
-        if (b === 0x0d || b === 0x0a) {
-          finish(commands[selectedIndex]);
-          return;
-        }
-      }
-    };
-
-    process.stdin.on('data', onData);
+    process.stdout.write('\x1b[36m编号>\x1b[0m ');
   });
+}
+
+/**
+ * 处理命令选择结果
+ * 从用户输入的数字解析出选中的命令
+ */
+function parseCommandChoice(
+  input: string,
+  commands: CommandInfo[],
+): CommandInfo | null {
+  const num = parseInt(input.trim(), 10);
+  if (isNaN(num) || num < 1 || num > commands.length) {
+    return null;
+  }
+  return commands[num - 1];
 }
 
 export interface ReplOptions {
@@ -364,23 +265,30 @@ export async function startRepl(options: ReplOptions): Promise<void> {
             readOnly: c.readOnly,
           }));
 
-          const selected = await showCommandSelector(commandList);
-          if (selected) {
-            // 选中后提示输入参数
-            process.stdout.write(`\x1b[36m/${selected.name}\x1b[0m `);
-            const args = await new Promise<string>((res) => {
-              rl.question('', (answer) => {
-                res(answer.trim());
+          // 显示编号菜单
+          showCommandSelector(commandList);
+
+          // 用 rl.question 读取用户输入的编号
+          rl.question('', (answer) => {
+            const selected = parseCommandChoice(answer, commandList);
+            if (selected) {
+              // 选中后提示输入参数
+              process.stdout.write(`\x1b[36m/${selected.name}\x1b[0m `);
+              rl.question('', (args) => {
+                resolve(`/${selected.name} ${args.trim()}`);
               });
-            });
-            resolve(`/${selected.name} ${args}`);
-          } else {
-            // 取消，重新显示提示符
-            inputBuffer = '';
-            renderPrompt();
-            isMenuActive = false;
-            return;
-          }
+            } else {
+              // 取消，重新显示提示符
+              inputBuffer = '';
+              isMenuActive = false;
+              // 重新注册键盘监听
+              process.stdin.on('keypress', onKeypress);
+              if (process.stdin.isTTY) {
+                process.stdin.setRawMode(true);
+              }
+              renderPrompt();
+            }
+          });
           return;
         }
 

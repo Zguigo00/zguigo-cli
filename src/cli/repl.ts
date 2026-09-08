@@ -224,15 +224,16 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const allCommandNames = [...commandNames, ...skillCommandNames];
 
   // 构建命令选择列表（内置命令 + Skill 命令）
+  // name 统一不带 / 前缀，显示时由 showCommandSelector 添加
   const { commands: builtinCommands } = await import('./commands.js');
-  const commandSelectorList = [
+  const commandSelectorList: CommandInfo[] = [
     ...builtinCommands.map(c => ({
-      name: c.name,
+      name: c.name.replace(/^\//, ''),  // 去掉 / 前缀
       description: c.description,
       readOnly: false,
     })),
     ...allCommands.map(c => ({
-      name: `/${c.name}`,
+      name: c.name,
       description: c.description,
       readOnly: c.readOnly,
     })),

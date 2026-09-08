@@ -54,13 +54,19 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
     }
 
     let selectedIndex = 0;
+    let menuLines = 0; // 已输出的菜单行数
 
     // 渲染菜单
     const render = () => {
-      // 恢复光标到菜单起始位置，清除下方内容
-      process.stdout.write('\x1b[u\x1b[J');
+      // 先回到菜单顶部，清除旧内容
+      if (menuLines > 0) {
+        process.stdout.write(`\x1b[${menuLines}A`);
+        process.stdout.write('\x1b[0J');
+      }
 
-      console.log('\x1b[36m选择命令 (↑↓ 移动, Enter 确认, Esc 取消):\x1b[0m');
+      // 用 \r 确保从行首开始
+      let output = '';
+      output += '\r\x1b[36m选择命令 (↑↓ 移动, Enter 确认, Esc 取消):\x1b[0m\n';
 
       for (let i = 0; i < commands.length; i++) {
         const cmd = commands[i];
@@ -69,15 +75,18 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
         const line = `  ${prefix} /${cmd.name}${readOnlyTag} - ${cmd.description}`;
 
         if (i === selectedIndex) {
-          console.log(`\x1b[36m${line}\x1b[0m`);
+          output += `\x1b[36m${line}\x1b[0m\n`;
         } else {
-          console.log(line);
+          output += `${line}\n`;
         }
       }
+
+      process.stdout.write(output);
+      menuLines = commands.length + 1;
     };
 
-    // 保存光标位置（菜单起始位置），然后渲染
-    process.stdout.write('\x1b[s');
+    // 清除当前行的提示符，然后渲染菜单
+    process.stdout.write('\r\x1b[K');
     render();
 
     // 监听键盘
@@ -95,14 +104,20 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
         render();
       } else if (key.name === 'return') {
         cleanup();
-        // 清除菜单区域，光标回到菜单起始位置
-        process.stdout.write('\x1b[u\x1b[J');
+        clearMenu();
         resolve(commands[selectedIndex]);
       } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
         cleanup();
-        // 清除菜单区域，光标回到菜单起始位置
-        process.stdout.write('\x1b[u\x1b[J');
+        clearMenu();
         resolve(null);
+      }
+    };
+
+    const clearMenu = () => {
+      // 回到菜单顶部，清除所有菜单行
+      if (menuLines > 0) {
+        process.stdout.write(`\x1b[${menuLines}A`);
+        process.stdout.write('\x1b[0J');
       }
     };
 

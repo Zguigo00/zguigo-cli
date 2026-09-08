@@ -54,18 +54,11 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
     }
 
     let selectedIndex = 0;
-    let isFirstRender = true;
 
     // 渲染菜单
     const render = () => {
-      // 清除之前的输出（向下清除所有行）
-      if (!isFirstRender) {
-        // 先移到菜单顶部
-        process.stdout.write(`\x1b[${commands.length + 1}A`);
-        // 从当前位置向下清除到屏幕底部
-        process.stdout.write('\x1b[J');
-      }
-      isFirstRender = false;
+      // 恢复光标到菜单起始位置，清除下方内容
+      process.stdout.write('\x1b[u\x1b[J');
 
       console.log('\x1b[36m选择命令 (↑↓ 移动, Enter 确认, Esc 取消):\x1b[0m');
 
@@ -75,7 +68,6 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
         const readOnlyTag = cmd.readOnly ? ' \x1b[90m[只读]\x1b[0m' : '';
         const line = `  ${prefix} /${cmd.name}${readOnlyTag} - ${cmd.description}`;
 
-        // 高亮选中项
         if (i === selectedIndex) {
           console.log(`\x1b[36m${line}\x1b[0m`);
         } else {
@@ -84,7 +76,8 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
       }
     };
 
-    // 初始渲染
+    // 保存光标位置（菜单起始位置），然后渲染
+    process.stdout.write('\x1b[s');
     render();
 
     // 监听键盘
@@ -102,9 +95,13 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
         render();
       } else if (key.name === 'return') {
         cleanup();
+        // 清除菜单区域，光标回到菜单起始位置
+        process.stdout.write('\x1b[u\x1b[J');
         resolve(commands[selectedIndex]);
       } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
         cleanup();
+        // 清除菜单区域，光标回到菜单起始位置
+        process.stdout.write('\x1b[u\x1b[J');
         resolve(null);
       }
     };
@@ -114,9 +111,6 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(false);
       }
-      // 移动光标到菜单下方
-      process.stdout.write(`\x1b[${commands.length - selectedIndex}B`);
-      console.log('');
     };
 
     process.stdin.on('keypress', onKeypress);

@@ -58,9 +58,12 @@ function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | nul
 
     // 渲染菜单
     const render = () => {
-      // 清除之前的输出
+      // 清除之前的输出（向下清除所有行）
       if (!isFirstRender) {
+        // 先移到菜单顶部
         process.stdout.write(`\x1b[${commands.length + 1}A`);
+        // 从当前位置向下清除到屏幕底部
+        process.stdout.write('\x1b[J');
       }
       isFirstRender = false;
 

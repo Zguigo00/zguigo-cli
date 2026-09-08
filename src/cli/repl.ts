@@ -223,6 +223,21 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const skillCommandNames = allCommands.map(c => `/${c.name}`);
   const allCommandNames = [...commandNames, ...skillCommandNames];
 
+  // 构建命令选择列表（内置命令 + Skill 命令）
+  const { commands: builtinCommands } = await import('./commands.js');
+  const commandSelectorList = [
+    ...builtinCommands.map(c => ({
+      name: c.name,
+      description: c.description,
+      readOnly: false,
+    })),
+    ...allCommands.map(c => ({
+      name: `/${c.name}`,
+      description: c.description,
+      readOnly: c.readOnly,
+    })),
+  ];
+
   // 调试输出
   if (debugMode) {
     console.error('[debug] 内置命令:', commandNames);
@@ -282,7 +297,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
           isMenuActive = true;
           cleanup();
 
-          const commandList = allCommands.map(c => ({
+          const commandList = commandSelectorList.map(c => ({
             name: c.name,
             description: c.description,
             readOnly: c.readOnly,

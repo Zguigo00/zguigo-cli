@@ -16,6 +16,7 @@ import { refactorCommand } from '../skills/built-in/refactor.js';
 import { TaskManager } from '../tasks/manager.js';
 import { JsonChatHistory, GitSnapshot } from '../history/index.js';
 import type { ChatSession } from '../history/protocol.js';
+import { BoxRenderer } from './box.js';
 
 /** 只读模式下禁止的工具列表 */
 const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
@@ -102,6 +103,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const commandRegistry = new CommandRegistry(projectRoot);
   const knowledgeLoader = new KnowledgeLoader(projectRoot);
   const taskManager = new TaskManager();
+  const boxRenderer = new BoxRenderer();
 
   // 初始化聊天历史和快照管理器
   const chatHistory = new JsonChatHistory(projectRoot);
@@ -604,6 +606,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
           logger.log(`执行 Skill 命令: /${commandName}${command.readOnly ? ' (只读)' : ''}`);
 
+          // 开始思考动画
+          boxRenderer.startThinking();
+
           await runAgent({
             client,
             tools,
@@ -621,18 +626,19 @@ export async function startRepl(options: ReplOptions): Promise<void> {
             onEvent: (event) => {
               switch (event.type) {
                 case 'text':
-                  process.stdout.write(event.content);
+                  boxRenderer.addText(event.content);
                   break;
                 case 'tool_call':
                   logger.toolCall(event.name, event.args);
+                  boxRenderer.toolCall(event.name, event.args);
                   break;
                 case 'tool_result':
                   logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
                   if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
-                    console.log(`\n[文件变更] ${event.data ?? ''}`);
+                    console.log(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
                   }
                   if (event.name === 'run_command' && event.success) {
-                    console.log(`\n[命令输出] ${event.data ?? ''}`);
+                    console.log(`  \x1b[32m✓ 命令输出:\x1b[0m ${event.data ?? ''}`);
                   }
                   break;
                 case 'iteration':
@@ -643,17 +649,16 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                   break;
                 case 'done':
                   if (event.answer) {
-                    process.stdout.write('\n');
+                    boxRenderer.render();
                   }
                   break;
                 case 'compress':
                   if (debugMode) {
                     logger.iteration(0);
                   }
-                  console.log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
+                  console.log(`\n\x1b[33m[压缩]\x1b[0m ${event.beforeTokens} → ${event.afterTokens} tokens`);
                   break;
                 case 'command':
-                  // 通知模型已进入命令模式
                   break;
               }
             },
@@ -666,6 +671,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       messages.push({ role: 'user', content: trimmed });
       saveToSession({ role: 'user', content: trimmed });
       autoSave();
+
+      // 开始思考动画
+      boxRenderer.startThinking();
 
       await runAgent({
         client,
@@ -683,19 +691,21 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         onEvent: (event) => {
           switch (event.type) {
             case 'text':
-              process.stdout.write(event.content);
+              // 缓冲文本，首次到达时自动停止思考动画
+              boxRenderer.addText(event.content);
               break;
             case 'tool_call':
               logger.toolCall(event.name, event.args);
+              // 先渲染已缓冲文本，再显示工具调用
+              boxRenderer.toolCall(event.name, event.args);
               break;
             case 'tool_result':
               logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
-              // 写入/命令工具提示
               if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
-                console.log(`\n[文件变更] ${event.data ?? ''}`);
+                console.log(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
               }
               if (event.name === 'run_command' && event.success) {
-                console.log(`\n[命令输出] ${event.data ?? ''}`);
+                console.log(`  \x1b[32m✓ 命令输出:\x1b[0m ${event.data ?? ''}`);
               }
               break;
             case 'iteration':
@@ -706,7 +716,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
               break;
             case 'done':
               if (event.answer) {
-                process.stdout.write('\n');
+                // 渲染最终对话框
+                boxRenderer.render();
                 saveToSession({ role: 'assistant', content: event.answer });
                 autoSave();
               }
@@ -715,7 +726,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
               if (debugMode) {
                 logger.iteration(0);
               }
-              console.log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
+              console.log(`\n\x1b[33m[压缩]\x1b[0m ${event.beforeTokens} → ${event.afterTokens} tokens`);
               break;
           }
         },
@@ -727,6 +738,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       console.error('\n错误:', err instanceof Error ? err.message : String(err));
     }
   }
+
+  // 退出时清理资源
+  boxRenderer.destroy();
 
   // 退出时保存会话
   if (currentSession.messages.length > 0) {

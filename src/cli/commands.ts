@@ -43,6 +43,8 @@ export interface CommandContext {
   switchSession?: (session: ChatSession) => void;
   /** Git 快照管理器 */
   snapshotManager?: SnapshotManager;
+  /** 用户原始输入（含命令名和参数） */
+  input?: string;
 }
 
 /** 内置命令列表 */
@@ -279,9 +281,21 @@ Skill 命令:
         return;
       }
 
-      // 需要从输入中获取任务标题
-      // 这里简化处理，实际应该解析参数
-      console.log('请使用: /task-add <任务标题> <任务描述>');
+      // 从输入中解析参数：/task-add <标题> [描述]
+      const args = ctx.input?.replace(/^\/task-add\s*/, '').trim();
+      if (!args) {
+        console.log('用法: /task-add <任务标题> [任务描述]');
+        console.log('示例: /task-add 重构认证模块 将 OAuth 逻辑拆分为独立服务');
+        return;
+      }
+
+      // 空格分隔：第一个词作为标题，剩余作为描述
+      const spaceIndex = args.indexOf(' ');
+      const title = spaceIndex > 0 ? args.slice(0, spaceIndex) : args;
+      const description = spaceIndex > 0 ? args.slice(spaceIndex + 1).trim() : title;
+
+      const task = ctx.taskManager.addTask(title, description);
+      console.log(`✓ 已添加任务: [${task.id}] ${task.title}`);
     },
   },
   {
@@ -293,7 +307,38 @@ Skill 命令:
         return;
       }
 
-      console.log('请使用: /task-remove <任务ID>');
+      // 从输入中解析任务 ID
+      const taskId = ctx.input?.replace(/^\/task-remove\s*/, '').trim();
+      if (!taskId) {
+        // 没有指定 ID，显示任务列表供选择
+        const tasks = ctx.taskManager.getTasks();
+        if (tasks.length === 0) {
+          console.log('任务列表为空。');
+          return;
+        }
+        console.log('\n用法: /task-remove <任务ID>\n');
+        console.log('当前任务:');
+        tasks.forEach(t => {
+          console.log(`  [${t.id}] ${t.title}`);
+        });
+        console.log('');
+        return;
+      }
+
+      const removed = ctx.taskManager.removeTask(taskId);
+      if (removed) {
+        console.log(`✓ 已删除任务: ${taskId}`);
+      } else {
+        console.log(`未找到任务: ${taskId}`);
+        const tasks = ctx.taskManager.getTasks();
+        if (tasks.length > 0) {
+          console.log('\n当前任务:');
+          tasks.forEach(t => {
+            console.log(`  [${t.id}] ${t.title}`);
+          });
+          console.log('');
+        }
+      }
     },
   },
   {

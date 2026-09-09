@@ -391,6 +391,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         currentSession,
         switchSession,
         snapshotManager,
+        input: trimmed,
       });
       if (handled) continue;
 

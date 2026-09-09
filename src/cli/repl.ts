@@ -21,6 +21,28 @@ import { BoxRenderer } from './box.js';
 /** 只读模式下禁止的工具列表 */
 const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
 
+/** 基础系统消息：定义 AI 助手的角色、语言和代码风格 */
+const BASE_SYSTEM_MESSAGE = `你是 zguigo，一个运行在终端中的 AI 编程助手。
+
+## 身份与角色
+- 你是一个专业的编程助手，帮助用户编写、调试和优化代码
+- 你拥有文件读写和命令执行能力，可以直接操作用户的项目
+
+## 语言
+- 默认使用中文与用户交流
+- 代码注释使用中文
+- 代码本身（变量名、函数名等）使用英文
+
+## 代码风格
+- 生成代码时遵循项目已有的代码风格和约定
+- 优先使用简洁、可读的写法
+- 遵循项目使用的语言和框架的最佳实践
+
+## 工作方式
+- 遇到不确定的问题时，先阅读相关代码再回答
+- 修改代码前先理解上下文，避免引入错误
+- 如果用户的要求不明确，先确认再行动`;
+
 /** 命令信息 */
 interface CommandInfo {
   name: string;
@@ -114,6 +136,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const switchSession = (session: ChatSession) => {
     currentSession = session;
     messages.length = 0;
+    // 确保基础系统消息存在
+    if (!session.messages.some(m => m.role === 'system')) {
+      messages.push({ role: 'system', content: BASE_SYSTEM_MESSAGE });
+    }
     messages.push(...session.messages.map(m => ({
       role: m.role,
       content: m.content,
@@ -180,6 +206,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     }
     logger.log('已加载 Skills 知识');
   }
+
+  // 注入基础系统消息（普通对话用，skill 命令会替换为自己的 instruction）
+  messages.push({ role: 'system', content: BASE_SYSTEM_MESSAGE });
+  logger.log('已注入基础系统消息');
 
   // 获取所有可用命令名（用于 Tab 补全）
   const allCommands = await commandRegistry.list();
@@ -337,6 +367,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   const clearMessages = () => {
     messages.length = 0;
+    // 重新注入基础系统消息
+    messages.push({ role: 'system', content: BASE_SYSTEM_MESSAGE });
   };
 
   console.log('zguigo v0.1.0 — 输入 / 选择命令，Ctrl+C 退出\n');

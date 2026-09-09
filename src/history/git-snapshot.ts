@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import type { SnapshotEntry, SnapshotManager } from './protocol.js';
 
 /**
@@ -16,7 +16,7 @@ export class GitSnapshot implements SnapshotManager {
 
   isGitRepo(): boolean {
     try {
-      execSync('git rev-parse --is-inside-work-tree', {
+      execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
         cwd: this.projectRoot,
         stdio: 'pipe',
       });
@@ -33,13 +33,13 @@ export class GitSnapshot implements SnapshotManager {
 
     try {
       // 暂存所有变更
-      execSync('git add -A', { cwd: this.projectRoot, stdio: 'pipe' });
+      execFileSync('git', ['add', '-A'], { cwd: this.projectRoot, stdio: 'pipe' });
 
       // 检查是否有变更
       try {
-        execSync('git diff --cached --quiet', { cwd: this.projectRoot, stdio: 'pipe' });
+        execFileSync('git', ['diff', '--cached', '--quiet'], { cwd: this.projectRoot, stdio: 'pipe' });
         // 没有变更，跳过
-        const hash = execSync('git rev-parse HEAD', {
+        const hash = execFileSync('git', ['rev-parse', 'HEAD'], {
           cwd: this.projectRoot,
           stdio: 'pipe',
         }).toString().trim();
@@ -48,14 +48,14 @@ export class GitSnapshot implements SnapshotManager {
         // 有变更，继续提交
       }
 
-      // 创建 commit
+      // 创建 commit（使用数组参数避免 shell 注入）
       const msg = `zguigo: ${description}`;
-      execSync(`git commit -m "${msg.replace(/"/g, '\\"')}"`, {
+      execFileSync('git', ['commit', '-m', msg], {
         cwd: this.projectRoot,
         stdio: 'pipe',
       });
 
-      const hash = execSync('git rev-parse HEAD', {
+      const hash = execFileSync('git', ['rev-parse', 'HEAD'], {
         cwd: this.projectRoot,
         stdio: 'pipe',
       }).toString().trim();
@@ -78,7 +78,7 @@ export class GitSnapshot implements SnapshotManager {
     }
 
     try {
-      execSync(`git reset --hard ${commitHash}`, {
+      execFileSync('git', ['reset', '--hard', commitHash], {
         cwd: this.projectRoot,
         stdio: 'pipe',
       });
@@ -93,7 +93,7 @@ export class GitSnapshot implements SnapshotManager {
     }
 
     try {
-      execSync('git reset --hard HEAD~1', {
+      execFileSync('git', ['reset', '--hard', 'HEAD~1'], {
         cwd: this.projectRoot,
         stdio: 'pipe',
       });
@@ -107,8 +107,9 @@ export class GitSnapshot implements SnapshotManager {
     if (!this.isGitRepo()) return [];
 
     try {
-      const output = execSync(
-        `git log --oneline -${limit} --format="%H|%s|%at" --grep="^zguigo:"`,
+      const output = execFileSync(
+        'git',
+        ['log', '--oneline', `-${limit}`, '--format=%H|%s|%at', '--grep=^zguigo:'],
         { cwd: this.projectRoot, stdio: 'pipe' }
       ).toString().trim();
 

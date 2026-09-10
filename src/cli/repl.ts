@@ -108,11 +108,11 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     label: ' 输入 ',
     style: {
       fg: 'white',
-      bg: 'black',
+      bg: 'default',
       border: { fg: 'cyan' },
       label: { fg: 'cyan', bold: true },
     },
-    tags: false,
+    tags: true,   // 启用标签，支持颜色
   });
 
   // 输出函数 —— 写入日志区并自动滚动到底部
@@ -263,9 +263,12 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   /** 渲染输入框内容 */
   const renderInput = () => {
-    const prompt = confirmMode ? '确认 (y/n)> ' : '你> ';
-    const display = `${prompt}${inputBuffer}█`;
-    inputBox.setContent(display);
+    if (confirmMode) {
+      inputBox.setContent(`{yellow-fg}{bold}确认 (y/n)>{/bold}{/yellow-fg} ${inputBuffer}{white-bg}{black-fg} {/black-fg}{/white-bg}`);
+    } else {
+      const cursor = `{white-bg}{black-fg} {/black-fg}{/white-bg}`;
+      inputBox.setContent(`{cyan-fg}{bold}你>{/bold}{/cyan-fg} ${inputBuffer}${cursor}`);
+    }
     screen.render();
   };
 
@@ -382,8 +385,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       return;
     }
 
-    // / → 打开命令菜单
-    if (_ch === '/' && inputBuffer === '') {
+    // / → 打开命令菜单（多种检测方式兼容不同终端）
+    if (inputBuffer === '' && (_ch === '/' || key.full === '/')) {
       inputBuffer = '/';
       commandMenu.open(commandProvider);
       renderInput();

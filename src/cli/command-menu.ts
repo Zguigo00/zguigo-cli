@@ -1,9 +1,9 @@
 /**
  * 浮动命令菜单
  *
- * 使用 blessed List 组件实现悬浮在输入框上方的命令选择菜单
+ * 使用 blessed Box 手动渲染命令列表（不依赖 blessed.list 的内部状态管理）
  * - 输入 `/` 自动弹出
- * - ↑↓ 方向键切换选中项
+ * - ↑↓ 方向键切换选中项（高亮行）
  * - 回车选中命令，ESC 关闭
  * - 支持输入过滤
  */
@@ -22,25 +22,17 @@ export interface CommandItem {
   readOnly?: boolean;
 }
 
-/** ANSI 颜色常量 */
-const CYAN = '\x1b[36m';
-const GREEN = '\x1b[32m';
-const DIM = '\x1b[2m';
-const RESET = '\x1b[0m';
+/** 菜单最大显示行数 */
+const MAX_VISIBLE = 8;
 
 /**
  * 命令菜单组件
  *
- * 生命周期：
- * 1. 构造时创建 blessed List（初始隐藏）
- * 2. open() 显示菜单，填充命令列表
- * 3. updateFilter() 随用户输入过滤命令
- * 4. 用户通过 ↑↓/Enter/ESC 交互
- * 5. select 事件传出选中的命令
+ * 使用 blessed.box + setContent 手动渲染每行，
+ * 选中行用反转色标记，不依赖 blessed.list 的内置选择逻辑。
  */
 export class CommandMenu {
-  private list: blessed.Widgets.ListElement;
-  private screen: blessed.Widgets.Screen;
+  private box: blessed.Widgets.BoxElement;
   private allCommands: CommandItem[] = [];
   private filteredCommands: CommandItem[] = [];
   private selectedIndex = 0;
@@ -51,29 +43,23 @@ export class CommandMenu {
   onSelect: ((command: CommandItem) => void) | null = null;
 
   constructor(screen: blessed.Widgets.Screen, bottomOffset: number) {
-    this.screen = screen;
-
-    // 创建浮动列表，定位在输入框上方
-    this.list = blessed.list({
+    this.box = blessed.box({
       parent: screen,
       label: ' 命令 ',
-      bottom: bottomOffset,      // 紧贴输入框上方
+      bottom: bottomOffset,
       left: 0,
-      width: 'shrink',
-      height: 0,                 // 动态调整
-      keys: false,               // 按键由 screen.on('keypress') 统一处理
-      mouse: true,
-      interactive: false,        // 不使用内置按键，手动控制
+      width: 50,
+      height: 3,        // 初始高度，open() 时动态调整
       border: { type: 'line' },
       style: {
         fg: 'white',
         bg: 'black',
         border: { fg: 'cyan' },
-        selected: { bg: 'blue', fg: 'white' },
-        item: { fg: 'white' },
+        label: { fg: 'cyan', bold: true },
       },
       hidden: true,
-      tags: true,                // 启用颜色标签
+      tags: true,         // 启用 {bold} 等标签
+      wrap: false,
     });
   }
 
@@ -86,16 +72,15 @@ export class CommandMenu {
     this.filterText = '';
     this.selectedIndex = 0;
     this.visible = true;
-    this.applyFilter();
-    this.list.show();
-    this.screen.render();
+    this.renderContent();
+    this.box.show();
+    this.box.focus();
   }
 
   /** 关闭菜单 */
   close(): void {
     this.visible = false;
-    this.list.hide();
-    this.screen.render();
+    this.box.hide();
   }
 
   /** 菜单是否可见 */
@@ -105,29 +90,25 @@ export class CommandMenu {
 
   /**
    * 更新过滤文本
-   * 用户在输入框中键入的字符会同步到这里过滤命令列表
    */
   updateFilter(text: string): void {
     this.filterText = text.toLowerCase();
     this.selectedIndex = 0;
-    this.applyFilter();
-    this.screen.render();
+    this.renderContent();
   }
 
   /** 方向键上 */
   moveUp(): void {
     if (this.filteredCommands.length === 0) return;
     this.selectedIndex = (this.selectedIndex - 1 + this.filteredCommands.length) % this.filteredCommands.length;
-    this.list.select(this.selectedIndex);
-    this.screen.render();
+    this.renderContent();
   }
 
   /** 方向键下 */
   moveDown(): void {
     if (this.filteredCommands.length === 0) return;
     this.selectedIndex = (this.selectedIndex + 1) % this.filteredCommands.length;
-    this.list.select(this.selectedIndex);
-    this.screen.render();
+    this.renderContent();
   }
 
   /** 确认选中当前项 */
@@ -143,17 +124,11 @@ export class CommandMenu {
     }
   }
 
-  /** 获取当前选中的命令（不关闭菜单） */
-  getSelected(): CommandItem | null {
-    if (this.filteredCommands.length === 0) return null;
-    return this.filteredCommands[this.selectedIndex] ?? null;
-  }
-
   /**
-   * 应用过滤并更新列表渲染
-   * 过滤逻辑：命令名或描述包含过滤文本
+   * 手动渲染菜单内容
+   * 用反转色标记选中行，不依赖 blessed.list 内部逻辑
    */
-  private applyFilter(): void {
+  private renderContent(): void {
     // 过滤命令
     if (this.filterText) {
       this.filteredCommands = this.allCommands.filter(cmd =>
@@ -164,32 +139,37 @@ export class CommandMenu {
       this.filteredCommands = [...this.allCommands];
     }
 
-    // 确保选中索引在范围内
+    // 边界检查
     if (this.selectedIndex >= this.filteredCommands.length) {
       this.selectedIndex = Math.max(0, this.filteredCommands.length - 1);
     }
 
-    // 渲染列表项（带颜色标签）
-    const items = this.filteredCommands.map(cmd => {
-      const readOnlyTag = cmd.readOnly ? ` ${DIM}[只读]${RESET}` : '';
-      const nameCol = `/${cmd.name}`.padEnd(16);
-      return `${GREEN}${nameCol}${RESET}${DIM}${cmd.description}${RESET}${readOnlyTag}`;
-    });
+    // 渲染每一行，选中行用反转色
+    const lines: string[] = [];
+    const displayCount = Math.min(this.filteredCommands.length, MAX_VISIBLE);
 
-    // 空列表时显示提示
-    if (items.length === 0) {
-      this.list.setItems(['  (无匹配命令)']);
+    if (displayCount === 0) {
+      lines.push('  (无匹配命令)');
     } else {
-      this.list.setItems(items);
+      for (let i = 0; i < displayCount; i++) {
+        const cmd = this.filteredCommands[i];
+        const selected = i === this.selectedIndex;
+        const readOnlyTag = cmd.readOnly ? ' [只读]' : '';
+        const nameStr = ` /${cmd.name}`;
+        const descStr = `  ${cmd.description}${readOnlyTag}`;
+
+        if (selected) {
+          // 选中行：反转色高亮
+          lines.push(`{white-bg}{black-fg}{bold}${nameStr}{/bold}${descStr}{/white-bg}{/black-fg}`);
+        } else {
+          lines.push(`{green-fg}${nameStr}{/green-fg}{white-fg}${descStr}{/white-fg}`);
+        }
+      }
     }
 
-    // 动态调整菜单高度（最多显示8项，最少1项）
-    const displayCount = Math.min(Math.max(this.filteredCommands.length, 1), 8);
-    this.list.height = displayCount + 2; // +2 是边框
-
-    // 保持选中状态
-    if (this.filteredCommands.length > 0) {
-      this.list.select(this.selectedIndex);
-    }
+    // 设置内容和高度
+    const contentHeight = Math.max(displayCount, 1);
+    this.box.height = contentHeight + 2; // +2 是上下边框
+    this.box.setContent(lines.join('\n'));
   }
 }

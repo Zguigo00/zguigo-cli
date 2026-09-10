@@ -26,6 +26,8 @@ export interface PlanRunContext {
   debugMode?: boolean;
   compressionConfig: CompressionConfig;
   askConfirm: (message: string) => Promise<boolean>;
+  /** 输出函数（blessed 模式下走屏幕，否则走 console.log） */
+  logLine?: (text: string) => void;
 }
 
 /**
@@ -35,11 +37,13 @@ export interface PlanRunContext {
 function createAgentEventHandler(
   logger: DebugLogger,
   debugMode?: boolean,
+  logLine?: (text: string) => void,
 ) {
+  const log = logLine ?? console.log;
   return (event: { type: string; [key: string]: unknown }) => {
     switch (event.type) {
       case 'text':
-        process.stdout.write(event.content as string);
+        log(event.content as string);
         break;
       case 'tool_call':
         logger.toolCall(event.name as string, event.args as string);
@@ -55,10 +59,10 @@ function createAgentEventHandler(
           ['write_file', 'edit_file', 'create_directory'].includes(event.name as string) &&
           event.success
         ) {
-          console.log(`\n[文件变更] ${(event.data as string) ?? ''}`);
+          log(`\n[文件变更] ${(event.data as string) ?? ''}`);
         }
         if (event.name === 'run_command' && event.success) {
-          console.log(`\n[命令输出] ${(event.data as string) ?? ''}`);
+          log(`\n[命令输出] ${(event.data as string) ?? ''}`);
         }
         break;
       case 'iteration':
@@ -71,7 +75,7 @@ function createAgentEventHandler(
         if (debugMode) {
           logger.iteration(0);
         }
-        console.log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
+        log(`\n[压缩] ${event.beforeTokens} → ${event.afterTokens} tokens`);
         break;
       case 'command':
       case 'confirm':
@@ -89,7 +93,8 @@ export async function handlePlanCommand(
   task: string,
   ctx: PlanRunContext,
 ): Promise<void> {
-  const { client, tools, messages, taskManager, logger, debugMode, compressionConfig, askConfirm } = ctx;
+  const { client, tools, messages, taskManager, logger, debugMode, compressionConfig, askConfirm, logLine } = ctx;
+  const log = logLine ?? console.log;
 
   logger.log(`启动 Plan 模式: ${task}`);
   messages.push({ role: 'user', content: task });
@@ -108,44 +113,44 @@ export async function handlePlanCommand(
           : `即将执行: ${toolName}`;
         return askConfirm(msg);
       },
-      onEvent: createAgentEventHandler(logger, debugMode),
+      onEvent: createAgentEventHandler(logger, debugMode, logLine),
       onTaskEvent: (event) => {
         switch (event.type) {
           case 'plan_start':
-            console.log('\n📋 正在生成任务计划...');
+            log('\n📋 正在生成任务计划...');
             break;
           case 'plan_complete':
-            console.log(`\n✓ 任务计划已生成，共 ${event.plan.tasks.length} 个任务\n`);
+            log(`\n✓ 任务计划已生成，共 ${event.plan.tasks.length} 个任务\n`);
             event.plan.tasks.forEach((t, i) => {
-              console.log(`  ${i + 1}. ${t.title}`);
+              log(`  ${i + 1}. ${t.title}`);
             });
-            console.log('\n输入 /run 开始执行任务，或 /tasks 查看任务列表\n');
+            log('\n输入 /run 开始执行任务，或 /tasks 查看任务列表\n');
             break;
           case 'task_start': {
             const progressBar = generateProgressBar(event.task.index, event.task.total);
-            console.log(`\n[${event.task.index + 1}/${event.task.total}] ${event.task.title}`);
-            console.log(`   ${progressBar}`);
+            log(`\n[${event.task.index + 1}/${event.task.total}] ${event.task.title}`);
+            log(`   ${progressBar}`);
             break;
           }
           case 'task_complete':
-            console.log(`   ✓ 完成`);
+            log(`   ✓ 完成`);
             break;
           case 'task_failed':
-            console.log(`   ✗ 失败: ${event.task.error}`);
+            log(`   ✗ 失败: ${event.task.error}`);
             break;
           case 'task_skipped':
-            console.log(`   - 跳过: ${event.task.reason}`);
+            log(`   - 跳过: ${event.task.reason}`);
             break;
           case 'all_done': {
             const finalProgress = generateProgressBar(event.stats.total, event.stats.total);
-            console.log(`\n🎉 所有任务执行完成！`);
-            console.log(`   ${finalProgress}`);
-            console.log(`   ${event.stats.completed}/${event.stats.total} 成功`);
+            log(`\n🎉 所有任务执行完成！`);
+            log(`   ${finalProgress}`);
+            log(`   ${event.stats.completed}/${event.stats.total} 成功`);
             if (event.stats.failed > 0) {
-              console.log(`   ${event.stats.failed} 个失败`);
+              log(`   ${event.stats.failed} 个失败`);
             }
             if (event.stats.skipped > 0) {
-              console.log(`   ${event.stats.skipped} 个跳过`);
+              log(`   ${event.stats.skipped} 个跳过`);
             }
             break;
           }
@@ -160,7 +165,7 @@ export async function handlePlanCommand(
       }
     }
   } catch (err) {
-    console.error('Plan 执行失败:', err instanceof Error ? err.message : String(err));
+    log(`Plan 执行失败: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -169,12 +174,13 @@ export async function handlePlanCommand(
  * 逐个执行任务列表中的任务
  */
 export async function handleRunCommand(ctx: PlanRunContext): Promise<void> {
-  const { client, tools, messages, taskManager, logger, debugMode, compressionConfig, askConfirm } = ctx;
+  const { client, tools, messages, taskManager, logger, debugMode, compressionConfig, askConfirm, logLine } = ctx;
+  const log = logLine ?? console.log;
 
   logger.log('开始执行任务列表');
-  console.log('\n🚀 开始执行任务列表...\n');
+  log('\n🚀 开始执行任务列表...\n');
 
-  const onEvent = createAgentEventHandler(logger, debugMode);
+  const onEvent = createAgentEventHandler(logger, debugMode, logLine);
 
   while (true) {
     const task = taskManager.nextTask();
@@ -184,8 +190,8 @@ export async function handleRunCommand(ctx: PlanRunContext): Promise<void> {
     const totalTasks = taskManager.count;
     const progressBar = generateProgressBar(currentIndex, totalTasks);
 
-    console.log(`[${currentIndex + 1}/${totalTasks}] ${task.title}`);
-    console.log(`   ${progressBar}`);
+    log(`[${currentIndex + 1}/${totalTasks}] ${task.title}`);
+    log(`   ${progressBar}`);
 
     messages.push({ role: 'user', content: `执行任务: ${task.title}\n${task.description}` });
 
@@ -208,14 +214,14 @@ export async function handleRunCommand(ctx: PlanRunContext): Promise<void> {
           // /run 额外处理：任务完成时标记到 taskManager
           if (event.type === 'done' && event.answer) {
             taskManager.completeCurrentTask(event.answer);
-            console.log(`\n   ✓ 完成`);
+            log(`\n   ✓ 完成`);
           }
         },
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       taskManager.failCurrentTask(error);
-      console.log(`\n✗ 任务失败: ${error}`);
+      log(`\n✗ 任务失败: ${error}`);
       break;
     }
   }
@@ -223,13 +229,13 @@ export async function handleRunCommand(ctx: PlanRunContext): Promise<void> {
   // 显示统计
   const stats = taskManager.getStats();
   const finalProgressBar = generateProgressBar(stats.total, stats.total);
-  console.log(`\n🎉 执行完成！`);
-  console.log(`   ${finalProgressBar}`);
-  console.log(`   ${stats.completed}/${stats.total} 成功`);
+  log(`\n🎉 执行完成！`);
+  log(`   ${finalProgressBar}`);
+  log(`   ${stats.completed}/${stats.total} 成功`);
   if (stats.failed > 0) {
-    console.log(`   ${stats.failed} 个失败`);
+    log(`   ${stats.failed} 个失败`);
   }
   if (stats.skipped > 0) {
-    console.log(`   ${stats.skipped} 个跳过`);
+    log(`   ${stats.skipped} 个跳过`);
   }
 }

@@ -28,6 +28,16 @@ export interface Command {
   handler: (ctx: CommandContext) => void | Promise<void>;
 }
 
+/** 输出辅助函数 —— 优先走 logLine（blessed），否则 console.log */
+function log(ctx: CommandContext, ...args: unknown[]): void {
+  const text = args.map(a => typeof a === 'string' ? a : String(a)).join(' ');
+  if (ctx.logLine) {
+    ctx.logLine(text);
+  } else {
+    console.log(text);
+  }
+}
+
 export interface CommandContext {
   messages: Message[];
   clearMessages: () => void;
@@ -45,6 +55,8 @@ export interface CommandContext {
   snapshotManager?: SnapshotManager;
   /** 用户原始输入（含命令名和参数） */
   input?: string;
+  /** 输出函数（blessed 模式下走屏幕，否则走 console.log） */
+  logLine?: (text: string) => void;
 }
 
 /** 内置命令列表 */
@@ -53,7 +65,7 @@ export const commands: Command[] = [
     name: '/help',
     description: '显示帮助信息',
     handler: (ctx) => {
-      console.log(`
+      log(ctx, `
 zguigo - 终端 AI 编程助手
 
 内置命令:
@@ -99,7 +111,7 @@ Skill 命令:
     description: '清空对话历史',
     handler: (ctx) => {
       ctx.clearMessages();
-      console.log('已清空对话历史。');
+      log(ctx,'已清空对话历史。');
     },
   },
   {
@@ -114,24 +126,24 @@ Skill 命令:
     description: '压缩对话历史（释放上下文空间）',
     handler: async (ctx) => {
       if (!ctx.client || !ctx.compressionConfig) {
-        console.log('压缩功能未配置。');
+        log(ctx,'压缩功能未配置。');
         return;
       }
 
       if (ctx.messages.length === 0) {
-        console.log('没有对话历史需要压缩。');
+        log(ctx,'没有对话历史需要压缩。');
         return;
       }
 
-      console.log('正在压缩对话历史...');
+      log(ctx,'正在压缩对话历史...');
       try {
         const result = await compressMessages(ctx.messages, ctx.client, ctx.compressionConfig);
         if (result.compressed) {
           ctx.messages.length = 0;
           ctx.messages.push(...result.messages);
-          console.log(`压缩完成: ${result.beforeTokens} → ${result.afterTokens} tokens`);
+          log(ctx,`压缩完成: ${result.beforeTokens} → ${result.afterTokens} tokens`);
         } else {
-          console.log('当前对话历史较短，无需压缩。');
+          log(ctx,'当前对话历史较短，无需压缩。');
         }
       } catch (err) {
         console.error('压缩失败:', err instanceof Error ? err.message : String(err));
@@ -143,24 +155,24 @@ Skill 命令:
     description: '列出可用的 Skill 命令',
     handler: async (ctx) => {
       if (!ctx.commandRegistry) {
-        console.log('命令注册表未初始化。');
+        log(ctx,'命令注册表未初始化。');
         return;
       }
 
       const cmds = await ctx.commandRegistry.list();
       if (cmds.length === 0) {
-        console.log('没有可用的 Skill 命令。');
+        log(ctx,'没有可用的 Skill 命令。');
         return;
       }
 
-      console.log('\n可用的 Skill 命令:\n');
+      log(ctx,'\n可用的 Skill 命令:\n');
       for (const cmd of cmds) {
         const readOnlyTag = cmd.readOnly ? ' [只读]' : '';
         const sourceTag = cmd.source === 'file' ? ' (文件)' : '';
-        console.log(`  /${cmd.name}${sourceTag}${readOnlyTag}`);
-        console.log(`    ${cmd.description}`);
+        log(ctx,`  /${cmd.name}${sourceTag}${readOnlyTag}`);
+        log(ctx,`    ${cmd.description}`);
       }
-      console.log('');
+      log(ctx,'');
     },
   },
   {
@@ -168,18 +180,18 @@ Skill 命令:
     description: '开始执行任务列表',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
       if (ctx.taskManager.count === 0) {
-        console.log('任务列表为空。使用 /plan 创建任务计划。');
+        log(ctx,'任务列表为空。使用 /plan 创建任务计划。');
         return;
       }
 
       // 实际执行逻辑在 repl.ts 中处理
       // 这里只是提示用户
-      console.log('开始执行任务列表...');
+      log(ctx,'开始执行任务列表...');
     },
   },
   {
@@ -187,13 +199,13 @@ Skill 命令:
     description: '显示当前任务列表',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
       const tasks = ctx.taskManager.getTasks();
       if (tasks.length === 0) {
-        console.log('任务列表为空。使用 /plan 创建任务计划。');
+        log(ctx,'任务列表为空。使用 /plan 创建任务计划。');
         return;
       }
 
@@ -201,7 +213,7 @@ Skill 命令:
       const stats = ctx.taskManager.getStats();
       const progressBar = generateProgressBar(stats.completed, stats.total);
 
-      console.log(`\n任务列表 (共 ${stats.total} 个):\n`);
+      log(ctx,`\n任务列表 (共 ${stats.total} 个):\n`);
 
       tasks.forEach((task, index) => {
         let status = '';
@@ -225,11 +237,11 @@ Skill 命令:
 
         const isCurrent = index === currentIndex;
         const marker = isCurrent ? ' ← 当前' : '';
-        console.log(`  ${status} ${task.title}${marker}`);
+        log(ctx,`  ${status} ${task.title}${marker}`);
       });
 
-      console.log(`\n进度: ${progressBar}`);
-      console.log(`统计: ${stats.completed} 完成, ${stats.failed} 失败, ${stats.skipped} 跳过, ${stats.pending} 待执行\n`);
+      log(ctx,`\n进度: ${progressBar}`);
+      log(ctx,`统计: ${stats.completed} 完成, ${stats.failed} 失败, ${stats.skipped} 跳过, ${stats.pending} 待执行\n`);
     },
   },
   {
@@ -237,15 +249,15 @@ Skill 命令:
     description: '标记当前任务完成',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
       const task = ctx.taskManager.completeCurrentTask('手动标记完成');
       if (task) {
-        console.log(`✓ 任务 "${task.title}" 已标记为完成`);
+        log(ctx,`✓ 任务 "${task.title}" 已标记为完成`);
       } else {
-        console.log('没有正在执行的任务。');
+        log(ctx,'没有正在执行的任务。');
       }
     },
   },
@@ -254,15 +266,15 @@ Skill 命令:
     description: '标记当前任务失败',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
       const task = ctx.taskManager.failCurrentTask('手动标记失败');
       if (task) {
-        console.log(`✗ 任务 "${task.title}" 已标记为失败`);
+        log(ctx,`✗ 任务 "${task.title}" 已标记为失败`);
       } else {
-        console.log('没有正在执行的任务。');
+        log(ctx,'没有正在执行的任务。');
       }
     },
   },
@@ -271,15 +283,15 @@ Skill 命令:
     description: '跳过当前任务',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
       const task = ctx.taskManager.skipCurrentTask('手动跳过');
       if (task) {
-        console.log(`- 任务 "${task.title}" 已跳过`);
+        log(ctx,`- 任务 "${task.title}" 已跳过`);
       } else {
-        console.log('没有正在执行的任务。');
+        log(ctx,'没有正在执行的任务。');
       }
     },
   },
@@ -288,15 +300,15 @@ Skill 命令:
     description: '添加新任务',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
       // 从输入中解析参数：/task-add <标题> [描述]
       const args = ctx.input?.replace(/^\/task-add\s*/, '').trim();
       if (!args) {
-        console.log('用法: /task-add <任务标题> [任务描述]');
-        console.log('示例: /task-add 重构认证模块 将 OAuth 逻辑拆分为独立服务');
+        log(ctx,'用法: /task-add <任务标题> [任务描述]');
+        log(ctx,'示例: /task-add 重构认证模块 将 OAuth 逻辑拆分为独立服务');
         return;
       }
 
@@ -306,7 +318,7 @@ Skill 命令:
       const description = spaceIndex > 0 ? args.slice(spaceIndex + 1).trim() : title;
 
       const task = ctx.taskManager.addTask(title, description);
-      console.log(`✓ 已添加任务: [${task.id}] ${task.title}`);
+      log(ctx,`✓ 已添加任务: [${task.id}] ${task.title}`);
     },
   },
   {
@@ -314,7 +326,7 @@ Skill 命令:
     description: '删除任务',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
@@ -324,30 +336,30 @@ Skill 命令:
         // 没有指定 ID，显示任务列表供选择
         const tasks = ctx.taskManager.getTasks();
         if (tasks.length === 0) {
-          console.log('任务列表为空。');
+          log(ctx,'任务列表为空。');
           return;
         }
-        console.log('\n用法: /task-remove <任务ID>\n');
-        console.log('当前任务:');
+        log(ctx,'\n用法: /task-remove <任务ID>\n');
+        log(ctx,'当前任务:');
         tasks.forEach(t => {
-          console.log(`  [${t.id}] ${t.title}`);
+          log(ctx,`  [${t.id}] ${t.title}`);
         });
-        console.log('');
+        log(ctx,'');
         return;
       }
 
       const removed = ctx.taskManager.removeTask(taskId);
       if (removed) {
-        console.log(`✓ 已删除任务: ${taskId}`);
+        log(ctx,`✓ 已删除任务: ${taskId}`);
       } else {
-        console.log(`未找到任务: ${taskId}`);
+        log(ctx,`未找到任务: ${taskId}`);
         const tasks = ctx.taskManager.getTasks();
         if (tasks.length > 0) {
-          console.log('\n当前任务:');
+          log(ctx,'\n当前任务:');
           tasks.forEach(t => {
-            console.log(`  [${t.id}] ${t.title}`);
+            log(ctx,`  [${t.id}] ${t.title}`);
           });
-          console.log('');
+          log(ctx,'');
         }
       }
     },
@@ -357,12 +369,12 @@ Skill 命令:
     description: '清空任务列表',
     handler: (ctx) => {
       if (!ctx.taskManager) {
-        console.log('任务管理器未初始化。');
+        log(ctx,'任务管理器未初始化。');
         return;
       }
 
       ctx.taskManager.clear();
-      console.log('已清空任务列表。');
+      log(ctx,'已清空任务列表。');
     },
   },
   // ==================== 聊天记录命令 ====================
@@ -371,24 +383,24 @@ Skill 命令:
     description: '显示历史会话列表',
     handler: async (ctx) => {
       if (!ctx.chatHistory) {
-        console.log('聊天历史未配置。');
+        log(ctx,'聊天历史未配置。');
         return;
       }
 
       const sessions = await ctx.chatHistory.listSessions();
       if (sessions.length === 0) {
-        console.log('没有历史会话。');
+        log(ctx,'没有历史会话。');
         return;
       }
 
-      console.log('\n历史会话:\n');
+      log(ctx,'\n历史会话:\n');
       sessions.forEach((s, i) => {
         const date = new Date(s.updatedAt).toLocaleString('zh-CN');
         const current = ctx.currentSession?.id === s.id ? ' ← 当前' : '';
         const msgCount = s.metadata.messageCount;
-        console.log(`  ${i + 1}. [${s.id}] ${s.title} (${msgCount} 条消息, ${date})${current}`);
+        log(ctx,`  ${i + 1}. [${s.id}] ${s.title} (${msgCount} 条消息, ${date})${current}`);
       });
-      console.log('');
+      log(ctx,'');
     },
   },
   {
@@ -396,12 +408,12 @@ Skill 命令:
     description: '保存当前会话',
     handler: async (ctx) => {
       if (!ctx.chatHistory || !ctx.currentSession) {
-        console.log('聊天历史未配置。');
+        log(ctx,'聊天历史未配置。');
         return;
       }
 
       await ctx.chatHistory.saveSession(ctx.currentSession);
-      console.log(`会话已保存: ${ctx.currentSession.title}`);
+      log(ctx,`会话已保存: ${ctx.currentSession.title}`);
     },
   },
   {
@@ -409,13 +421,13 @@ Skill 命令:
     description: '创建新会话',
     handler: (ctx) => {
       if (!ctx.chatHistory) {
-        console.log('聊天历史未配置。');
+        log(ctx,'聊天历史未配置。');
         return;
       }
 
       const session = ctx.chatHistory.createSession();
       ctx.switchSession?.(session);
-      console.log(`已创建新会话: ${session.title}`);
+      log(ctx,`已创建新会话: ${session.title}`);
     },
   },
   {
@@ -423,7 +435,7 @@ Skill 命令:
     description: '加载历史会话',
     handler: async (ctx) => {
       if (!ctx.chatHistory || !ctx.switchSession) {
-        console.log('聊天历史未配置。');
+        log(ctx,'聊天历史未配置。');
         return;
       }
 
@@ -433,22 +445,22 @@ Skill 命令:
         // 没有指定 ID，显示会话列表供选择
         const sessions = await ctx.chatHistory.listSessions();
         if (sessions.length === 0) {
-          console.log('没有历史会话。');
+          log(ctx,'没有历史会话。');
           return;
         }
-        console.log('\n用法: /load <会话ID>\n');
-        console.log('可用会话:');
+        log(ctx,'\n用法: /load <会话ID>\n');
+        log(ctx,'可用会话:');
         sessions.forEach((s, i) => {
           const date = new Date(s.updatedAt).toLocaleString('zh-CN');
-          console.log(`  [${s.id}] ${s.title} (${s.metadata.messageCount} 条消息, ${date})`);
+          log(ctx,`  [${s.id}] ${s.title} (${s.metadata.messageCount} 条消息, ${date})`);
         });
-        console.log('');
+        log(ctx,'');
         return;
       }
 
       const session = await ctx.chatHistory.loadSession(sessionId);
       if (!session) {
-        console.log(`未找到会话: ${sessionId}`);
+        log(ctx,`未找到会话: ${sessionId}`);
         return;
       }
 
@@ -458,7 +470,7 @@ Skill 命令:
       }
 
       ctx.switchSession(session);
-      console.log(`已加载会话: ${session.title} (${session.messages.length} 条消息)`);
+      log(ctx,`已加载会话: ${session.title} (${session.messages.length} 条消息)`);
     },
   },
   {
@@ -466,7 +478,7 @@ Skill 命令:
     description: '删除历史会话',
     handler: async (ctx) => {
       if (!ctx.chatHistory) {
-        console.log('聊天历史未配置。');
+        log(ctx,'聊天历史未配置。');
         return;
       }
 
@@ -476,27 +488,27 @@ Skill 命令:
         // 没有指定 ID，显示会话列表供选择
         const sessions = await ctx.chatHistory.listSessions();
         if (sessions.length === 0) {
-          console.log('没有历史会话。');
+          log(ctx,'没有历史会话。');
           return;
         }
-        console.log('\n用法: /delete <会话ID>\n');
-        console.log('可用会话:');
+        log(ctx,'\n用法: /delete <会话ID>\n');
+        log(ctx,'可用会话:');
         sessions.forEach(s => {
           const current = ctx.currentSession?.id === s.id ? ' (当前)' : '';
-          console.log(`  [${s.id}] ${s.title}${current}`);
+          log(ctx,`  [${s.id}] ${s.title}${current}`);
         });
-        console.log('');
+        log(ctx,'');
         return;
       }
 
       // 禁止删除当前会话
       if (ctx.currentSession?.id === sessionId) {
-        console.log('不能删除当前会话。请先切换到其他会话或创建新会话。');
+        log(ctx,'不能删除当前会话。请先切换到其他会话或创建新会话。');
         return;
       }
 
       await ctx.chatHistory.deleteSession(sessionId);
-      console.log(`已删除会话: ${sessionId}`);
+      log(ctx,`已删除会话: ${sessionId}`);
     },
   },
   // ==================== 快照回滚命令 ====================
@@ -505,18 +517,18 @@ Skill 命令:
     description: '撤销最近一次文件变更',
     handler: async (ctx) => {
       if (!ctx.snapshotManager) {
-        console.log('快照管理器未配置。');
+        log(ctx,'快照管理器未配置。');
         return;
       }
 
       if (!ctx.snapshotManager.isGitRepo()) {
-        console.log('当前目录不是 Git 仓库，无法使用回滚功能。');
+        log(ctx,'当前目录不是 Git 仓库，无法使用回滚功能。');
         return;
       }
 
       try {
         await ctx.snapshotManager.undo();
-        console.log('已撤销最近一次文件变更。');
+        log(ctx,'已撤销最近一次文件变更。');
       } catch (err) {
         console.error('撤销失败:', err instanceof Error ? err.message : String(err));
       }
@@ -527,28 +539,28 @@ Skill 命令:
     description: '查看快照历史或回滚到指定版本',
     handler: async (ctx) => {
       if (!ctx.snapshotManager) {
-        console.log('快照管理器未配置。');
+        log(ctx,'快照管理器未配置。');
         return;
       }
 
       if (!ctx.snapshotManager.isGitRepo()) {
-        console.log('当前目录不是 Git 仓库，无法使用回滚功能。');
+        log(ctx,'当前目录不是 Git 仓库，无法使用回滚功能。');
         return;
       }
 
       const history = await ctx.snapshotManager.getHistory(10);
       if (history.length === 0) {
-        console.log('没有快照历史。');
+        log(ctx,'没有快照历史。');
         return;
       }
 
-      console.log('\n快照历史:\n');
+      log(ctx,'\n快照历史:\n');
       history.forEach((entry, i) => {
         const date = new Date(entry.timestamp).toLocaleString('zh-CN');
-        console.log(`  ${i + 1}. ${entry.hash.slice(0, 8)} — ${entry.message} (${date})`);
+        log(ctx,`  ${i + 1}. ${entry.hash.slice(0, 8)} — ${entry.message} (${date})`);
       });
-      console.log('\n使用 /rollback <hash> 回滚到指定版本');
-      console.log('使用 /undo 撤销最近一次变更\n');
+      log(ctx,'\n使用 /rollback <hash> 回滚到指定版本');
+      log(ctx,'使用 /undo 撤销最近一次变更\n');
     },
   },
 ];

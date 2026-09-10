@@ -1,4 +1,13 @@
-import * as readline from 'readline';
+/**
+ * REPL 主循环 —— blessed TUI 版本
+ *
+ * 使用 blessed 管理全屏终端界面：
+ * - 顶部：可滚动的输出日志区（assistant 回复、工具输出、命令结果）
+ * - 底部：单行输入框，逐字符捕获键盘输入
+ * - 浮动：命令菜单（输入 / 时弹出，支持过滤、↑↓导航）
+ */
+
+import blessed from 'blessed';
 import { handleCommand, getCommandNames } from './commands.js';
 import type { Message } from '../model/types.js';
 import type { ModelClient } from '../model/types.js';
@@ -17,9 +26,14 @@ import { JsonChatHistory, GitSnapshot } from '../history/index.js';
 import type { ChatSession } from '../history/protocol.js';
 import { BoxRenderer } from './box.js';
 import { handlePlanCommand, handleRunCommand } from './plan-runner.js';
+import { CommandMenu } from './command-menu.js';
+import type { CommandItem, CommandProvider } from './command-menu.js';
 
 /** 只读模式下禁止的工具列表 */
 const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
+
+/** 输入框高度（含边框） */
+const INPUT_HEIGHT = 3;
 
 /** 基础系统消息：定义 AI 助手的角色、语言和代码风格 */
 const BASE_SYSTEM_MESSAGE = `你是 zguigo，一个运行在终端中的 AI 编程助手。
@@ -43,52 +57,6 @@ const BASE_SYSTEM_MESSAGE = `你是 zguigo，一个运行在终端中的 AI 编�
 - 修改代码前先理解上下文，避免引入错误
 - 如果用户的要求不明确，先确认再行动`;
 
-/** 命令信息 */
-interface CommandInfo {
-  name: string;
-  description: string;
-  readOnly?: boolean;
-}
-
-/**
- * 交互式命令选择菜单
- * 显示编号列表，用户输入数字选择
- * 兼容所有终端（Windows cmd.exe、PowerShell、Linux、Mac）
- */
-function showCommandSelector(commands: CommandInfo[]): Promise<CommandInfo | null> {
-  return new Promise((resolve) => {
-    if (commands.length === 0) {
-      resolve(null);
-      return;
-    }
-
-    // 渲染菜单
-    console.log('\x1b[36m选择命令 (输入编号，0 取消):\x1b[0m');
-    for (let i = 0; i < commands.length; i++) {
-      const cmd = commands[i];
-      const readOnlyTag = cmd.readOnly ? ' \x1b[90m[只读]\x1b[0m' : '';
-      console.log(`  \x1b[32m${i + 1}\x1b[0m. /${cmd.name}${readOnlyTag} - ${cmd.description}`);
-    }
-
-    process.stdout.write('\x1b[36m编号>\x1b[0m ');
-  });
-}
-
-/**
- * 处理命令选择结果
- * 从用户输入的数字解析出选中的命令
- */
-function parseCommandChoice(
-  input: string,
-  commands: CommandInfo[],
-): CommandInfo | null {
-  const num = parseInt(input.trim(), 10);
-  if (isNaN(num) || num < 1 || num > commands.length) {
-    return null;
-  }
-  return commands[num - 1];
-}
-
 export interface ReplOptions {
   client: ModelClient;
   tools: ToolRegistry;
@@ -96,8 +64,7 @@ export interface ReplOptions {
 }
 
 /**
- * 启动交互式 REPL
- * 使用 Agent Loop 处理对话
+ * 启动 blessed TUI 交互式 REPL
  */
 export async function startRepl(options: ReplOptions): Promise<void> {
   const { client, tools, debug: debugMode } = options;
@@ -105,12 +72,68 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const commandNames = getCommandNames();
   const logger = new DebugLogger(debugMode ?? false);
 
-  // 初始化 Skill 系统
+  // ==================== 创建 blessed 界面 ====================
+
+  const screen = blessed.screen({
+    smartCSR: true,
+    title: 'zguigo',
+    fullUnicode: true,
+  });
+
+  // 输出日志区（占满输入框以上的空间）
+  const logBox = blessed.log({
+    parent: screen,
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: `100%-${INPUT_HEIGHT}`,
+    scrollable: true,
+    alwaysScroll: true,
+    scrollbar: { style: { bg: 'cyan' } },
+    mouse: true,
+    keys: true,
+    vi: true,
+    style: { fg: 'white', bg: 'black' },
+    tags: false,
+  });
+
+  // 输入框（固定在底部）
+  const inputBox = blessed.box({
+    parent: screen,
+    bottom: 0,
+    left: 0,
+    width: '100%',
+    height: INPUT_HEIGHT,
+    border: { type: 'line' },
+    label: ' 输入 ',
+    style: {
+      fg: 'white',
+      bg: 'black',
+      border: { fg: 'cyan' },
+      label: { fg: 'cyan', bold: true },
+    },
+    tags: false,
+  });
+
+  // 输出函数 —— 写入日志区并自动滚动到底部
+  const writeLine = (text: string) => {
+    logBox.add(text);
+    logBox.setScrollPerc(100);
+    screen.render();
+  };
+
+  // ==================== 初始化服务 ====================
+
   const projectRoot = process.cwd();
   const commandRegistry = new CommandRegistry(projectRoot);
   const knowledgeLoader = new KnowledgeLoader(projectRoot);
   const taskManager = new TaskManager();
-  const boxRenderer = new BoxRenderer();
+
+  // BoxRenderer 通过 writeLine 输出，思考动画更新输入框 label
+  const boxRenderer = new BoxRenderer(writeLine, (frame: string) => {
+    inputBox.setLabel(` ${frame} 思考中 `);
+    screen.render();
+  });
 
   // 初始化聊天历史和快照管理器
   const chatHistory = new JsonChatHistory(projectRoot);
@@ -121,7 +144,6 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const switchSession = (session: ChatSession) => {
     currentSession = session;
     messages.length = 0;
-    // 确保基础系统消息存在
     if (!session.messages.some(m => m.role === 'system')) {
       messages.push({ role: 'system', content: BASE_SYSTEM_MESSAGE });
     }
@@ -154,11 +176,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     }
   };
 
-  // 快照管理器可用于写入工具
+  // 快照管理器：写入工具执行前自动创建快照
   if (snapshotManager.isGitRepo()) {
     logger.log('Git 快照已启用');
-
-    // 包装工具调用，写入类工具执行前自动创建快照
     const originalCall = tools.call.bind(tools);
     const WRITE_TOOLS = ['write_file', 'edit_file', 'create_directory'];
     tools.call = async (name: string, args: Record<string, unknown>) => {
@@ -181,10 +201,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   commandRegistry.register(explainCommand);
   commandRegistry.register(refactorCommand);
 
-  // 加载 Knowledge 并注入到 system message
+  // 加载 Knowledge
   const knowledge = await knowledgeLoader.loadAll();
   if (knowledge) {
-    // 获取当前 system message 或创建新的
     const systemMsg = messages.find(m => m.role === 'system');
     if (systemMsg) {
       systemMsg.content += '\n\n' + knowledge;
@@ -192,37 +211,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     logger.log('已加载 Skills 知识');
   }
 
-  // 注入基础系统消息（普通对话用，skill 命令会替换为自己的 instruction）
+  // 注入基础系统消息
   messages.push({ role: 'system', content: BASE_SYSTEM_MESSAGE });
   logger.log('已注入基础系统消息');
-
-  // 获取所有可用命令名（用于 Tab 补全）
-  const allCommands = await commandRegistry.list();
-  const skillCommandNames = allCommands.map(c => `/${c.name}`);
-  const allCommandNames = [...commandNames, ...skillCommandNames];
-
-  // 构建命令选择列表（内置命令 + Skill 命令）
-  // name 统一不带 / 前缀，显示时由 showCommandSelector 添加
-  const { commands: builtinCommands } = await import('./commands.js');
-  const commandSelectorList: CommandInfo[] = [
-    ...builtinCommands.map(c => ({
-      name: c.name.replace(/^\//, ''),  // 去掉 / 前缀
-      description: c.description,
-      readOnly: false,
-    })),
-    ...allCommands.map(c => ({
-      name: c.name,
-      description: c.description,
-      readOnly: c.readOnly,
-    })),
-  ];
-
-  // 调试输出
-  if (debugMode) {
-    console.error('[debug] 内置命令:', commandNames);
-    console.error('[debug] Skill 命令:', skillCommandNames);
-    console.error('[debug] 所有命令:', allCommandNames);
-  }
 
   // 加载压缩配置
   const modelConfig = loadModelConfig();
@@ -232,142 +223,222 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     recentMessageCount: modelConfig.recentMessageCount,
   };
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    completer: (line: string) => {
-      const hits = allCommandNames.filter((c) => c.startsWith(line));
-      return [hits.length ? hits : allCommandNames, line];
+  // 获取所有命令（用于 Tab 补全和菜单）
+  const allSkillCommands = await commandRegistry.list();
+  const allCommandNames = [...commandNames, ...allSkillCommands.map(c => `/${c.name}`)];
+
+  // ==================== 命令菜单 ====================
+
+  // 命令提供者：动态从 CommandRegistry + 内置命令获取
+  const commandProvider: CommandProvider = {
+    getCommands(): CommandItem[] {
+      const builtinItems: CommandItem[] = commandNames.map(name => ({
+        name: name.replace(/^\//, ''),
+        description: '',
+        readOnly: false,
+      }));
+      const skillItems: CommandItem[] = allSkillCommands.map(c => ({
+        name: c.name,
+        description: c.description,
+        readOnly: c.readOnly,
+      }));
+      return [...builtinItems, ...skillItems];
     },
-  });
-
-  /**
-   * 带命令选择的输入提示
-   * 输入 / 时立即显示选择菜单
-   */
-  const promptWithSelector = (): Promise<string> =>
-    new Promise((resolve) => {
-      let inputBuffer = '';
-      let isMenuActive = false;
-
-      const renderPrompt = () => {
-        process.stdout.write('\r\x1b[K\x1b[36m你>\x1b[0m ' + inputBuffer);
-      };
-
-      readline.emitKeypressEvents(process.stdin);
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(true);
-      }
-
-      const onKeypress = async (str: string, key: readline.Key) => {
-        // Ctrl+C 退出
-        if (key.ctrl && key.name === 'c') {
-          cleanup();
-          process.exit(0);
-        }
-
-        // 菜单激活时的处理
-        if (isMenuActive) {
-          return;
-        }
-
-        // 检测到 / 且缓冲区为空时触发菜单
-        if (str === '/' && inputBuffer === '') {
-          isMenuActive = true;
-          cleanup();
-
-          const commandList = commandSelectorList.map(c => ({
-            name: c.name,
-            description: c.description,
-            readOnly: c.readOnly,
-          }));
-
-          // 显示编号菜单
-          showCommandSelector(commandList);
-
-          // 用 rl.question 读取用户输入的编号
-          rl.question('', (answer) => {
-            const selected = parseCommandChoice(answer, commandList);
-            if (selected) {
-              // 选中后提示输入参数
-              process.stdout.write(`\x1b[36m/${selected.name}\x1b[0m `);
-              rl.question('', (args) => {
-                resolve(`/${selected.name} ${args.trim()}`);
-              });
-            } else {
-              // 取消，重新显示提示符
-              inputBuffer = '';
-              isMenuActive = false;
-              // 重新注册键盘监听
-              process.stdin.on('keypress', onKeypress);
-              if (process.stdin.isTTY) {
-                process.stdin.setRawMode(true);
-              }
-              renderPrompt();
-            }
-          });
-          return;
-        }
-
-        // 回车确认
-        if (key.name === 'return') {
-          cleanup();
-          console.log('');
-          resolve(inputBuffer);
-          return;
-        }
-
-        // 退格
-        if (key.name === 'backspace') {
-          inputBuffer = inputBuffer.slice(0, -1);
-          renderPrompt();
-          return;
-        }
-
-        // 普通字符
-        if (str && !key.ctrl && !key.meta) {
-          inputBuffer += str;
-          renderPrompt();
-        }
-      };
-
-      const cleanup = () => {
-        process.stdin.removeListener('keypress', onKeypress);
-        if (process.stdin.isTTY) {
-          process.stdin.setRawMode(false);
-        }
-      };
-
-      process.stdin.on('keypress', onKeypress);
-      renderPrompt();
-    });
-
-  /** 确认提示，返回 true/false */
-  const askConfirm = (message: string): Promise<boolean> =>
-    new Promise((resolve) => {
-      rl.question(`\x1b[33m[确认] ${message}? (y/n)\x1b[0m `, (answer) => {
-        resolve(answer.trim().toLowerCase() === 'y');
-      });
-    });
-
-  const clearMessages = () => {
-    messages.length = 0;
-    // 重新注入基础系统消息
-    messages.push({ role: 'system', content: BASE_SYSTEM_MESSAGE });
   };
 
-  console.log('zguigo v0.1.0 — 输入 / 选择命令，Ctrl+C 退出\n');
+  const commandMenu = new CommandMenu(screen, INPUT_HEIGHT);
+
+  // 选中命令后填充输入缓冲区
+  commandMenu.onSelect = (cmd) => {
+    inputBuffer = `/${cmd.name} `;
+    renderInput();
+  };
+
+  // ==================== 输入系统 ====================
+
+  let inputBuffer = '';
+  let resolvingLine: ((line: string) => void) | null = null;
+  let confirmMode = false;
+  let confirmResolver: ((answer: boolean) => void) | null = null;
+
+  /** 渲染输入框内容 */
+  const renderInput = () => {
+    const prompt = confirmMode ? '确认 (y/n)> ' : '你> ';
+    const display = `${prompt}${inputBuffer}█`;
+    inputBox.setContent(display);
+    screen.render();
+  };
+
+  /** 等待用户输入一行（Promise 化的输入循环） */
+  const nextLine = (): Promise<string> =>
+    new Promise((resolve) => {
+      resolvingLine = resolve;
+      renderInput();
+    });
+
+  /** 确认提示 */
+  const askConfirm = (message: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      writeLine(`\x1b[33m[确认] ${message}? (y/n)\x1b[0m`);
+      confirmMode = true;
+      confirmResolver = resolve;
+      renderInput();
+    });
+
+  // ==================== 按键处理 ====================
+
+  screen.on('keypress', (_ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
+    // 确认模式：只接受 y/n
+    if (confirmMode) {
+      if (key.name === 'y') {
+        confirmMode = false;
+        confirmResolver?.(true);
+        confirmResolver = null;
+        inputBuffer = '';
+        renderInput();
+      } else if (key.name === 'n' || key.name === 'escape') {
+        confirmMode = false;
+        confirmResolver?.(false);
+        confirmResolver = null;
+        inputBuffer = '';
+        renderInput();
+      }
+      return;
+    }
+
+    // ---- 菜单可见时的按键处理 ----
+    if (commandMenu.isVisible()) {
+      if (key.name === 'up') {
+        commandMenu.moveUp();
+        return;
+      }
+      if (key.name === 'down') {
+        commandMenu.moveDown();
+        return;
+      }
+      if (key.name === 'escape') {
+        commandMenu.close();
+        return;
+      }
+      if (key.name === 'return') {
+        commandMenu.confirm();
+        return;
+      }
+      // 普通字符 → 更新缓冲区 + 菜单过滤
+      if (_ch && !key.ctrl && !key.meta && key.name !== 'backspace') {
+        inputBuffer += _ch;
+        // 菜单过滤文本：去掉开头的 /
+        const filterText = inputBuffer.startsWith('/') ? inputBuffer.slice(1) : inputBuffer;
+        commandMenu.updateFilter(filterText);
+        renderInput();
+        return;
+      }
+    }
+
+    // ---- 菜单隐藏时的按键处理 ----
+
+    // Ctrl+C → 退出
+    if (key.name === 'c' && key.ctrl) {
+      boxRenderer.destroy();
+      screen.destroy();
+      process.exit(0);
+    }
+
+    // 回车 → 提交输入
+    if (key.name === 'return') {
+      if (inputBuffer.trim() && resolvingLine) {
+        const line = inputBuffer.trim();
+        inputBuffer = '';
+        commandMenu.close();
+        renderInput();
+        // 恢复输入框 label
+        inputBox.setLabel(' 输入 ');
+        const resolve = resolvingLine;
+        resolvingLine = null;
+        resolve(line);
+      }
+      return;
+    }
+
+    // / → 打开命令菜单
+    if (_ch === '/' && inputBuffer === '') {
+      inputBuffer = '/';
+      commandMenu.open(commandProvider);
+      renderInput();
+      return;
+    }
+
+    // 退格
+    if (key.name === 'backspace') {
+      inputBuffer = inputBuffer.slice(0, -1);
+      if (inputBuffer === '' && commandMenu.isVisible()) {
+        commandMenu.close();
+      }
+      renderInput();
+      return;
+    }
+
+    // Ctrl+U → 清空输入
+    if (key.name === 'u' && key.ctrl) {
+      inputBuffer = '';
+      commandMenu.close();
+      renderInput();
+      return;
+    }
+
+    // Ctrl+L → 清屏重绘
+    if (key.name === 'l' && key.ctrl) {
+      logBox.setContent('');
+      screen.render();
+      return;
+    }
+
+    // 可打印字符
+    if (_ch && !key.ctrl && !key.meta) {
+      inputBuffer += _ch;
+      renderInput();
+    }
+  });
+
+  // ==================== Tab 补全 ====================
+
+  screen.key('tab', () => {
+    if (commandMenu.isVisible()) return;
+    if (!inputBuffer.startsWith('/')) return;
+
+    const partial = inputBuffer.slice(1); // 去掉 /
+    const matches = allCommandNames.filter(c => c.startsWith(`/${partial}`));
+    if (matches.length === 1) {
+      inputBuffer = matches[0] + ' ';
+      renderInput();
+    } else if (matches.length > 1) {
+      writeLine(`\n可用命令: ${matches.join(', ')}`);
+    }
+  });
+
+  // ==================== 终端 resize ====================
+
+  screen.on('resize', () => {
+    screen.render();
+  });
+
+  // ==================== 主循环 ====================
+
+  writeLine('zguigo v0.2.0 (blessed TUI) — 输入 / 选择命令，Ctrl+C 退出\n');
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      const trimmed = (await promptWithSelector()).trim();
+      const trimmed = await nextLine();
       if (!trimmed) continue;
 
       // 处理内置命令
       const handled = await handleCommand(trimmed, {
         messages,
-        clearMessages,
+        clearMessages: () => {
+          messages.length = 0;
+          messages.push({ role: 'system', content: BASE_SYSTEM_MESSAGE });
+        },
         client,
         compressionConfig,
         commandRegistry,
@@ -377,6 +448,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         switchSession,
         snapshotManager,
         input: trimmed,
+        logLine: writeLine,
       });
       if (handled) continue;
 
@@ -384,12 +456,12 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       if (trimmed.startsWith('/plan ')) {
         const task = trimmed.slice(6).trim();
         if (!task) {
-          console.log('请提供任务描述，例如: /plan 重构认证模块');
+          writeLine('请提供任务描述，例如: /plan 重构认证模块');
           continue;
         }
         await handlePlanCommand(task, {
           client, tools, messages, taskManager, logger,
-          debugMode, compressionConfig, askConfirm,
+          debugMode, compressionConfig, askConfirm, logLine: writeLine,
         });
         continue;
       }
@@ -397,12 +469,12 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       // 处理 /run 命令
       if (trimmed === '/run') {
         if (taskManager.count === 0) {
-          console.log('任务列表为空。使用 /plan 创建任务计划。');
+          writeLine('任务列表为空。使用 /plan 创建任务计划。');
           continue;
         }
         await handleRunCommand({
           client, tools, messages, taskManager, logger,
-          debugMode, compressionConfig, askConfirm,
+          debugMode, compressionConfig, askConfirm, logLine: writeLine,
         });
         continue;
       }
@@ -415,21 +487,17 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
         const command = await commandRegistry.get(commandName);
         if (command) {
-          // 替换 $ARGUMENTS 占位符
           const instruction = command.instruction.replace(/\$ARGUMENTS/g, args || '（未指定目标）');
-
-          // 注入为系统消息
           messages.push({ role: 'system', content: instruction });
-
-          // 添加用户任务
           if (args) {
             messages.push({ role: 'user', content: args });
           }
 
           logger.log(`执行 Skill 命令: /${commandName}${command.readOnly ? ' (只读)' : ''}`);
 
-          // 开始思考动画
-          boxRenderer.startThinking();
+          // 更新输入框 label 显示思考状态
+          inputBox.setLabel(` ⠹ 思考中 `);
+          screen.render();
 
           await runAgent({
             client,
@@ -438,10 +506,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
             debug: debugMode,
             compressionConfig,
             readOnlyTools: command.readOnly ? READ_ONLY_TOOLS : undefined,
-            confirmToolCall: async (toolName, args) => {
+            confirmToolCall: async (toolName, toolArgs) => {
               const tool = tools.get(toolName);
               const msg = tool?.confirmMessage
-                ? tool.confirmMessage(args)
+                ? tool.confirmMessage(toolArgs)
                 : `即将执行: ${toolName}`;
               return askConfirm(msg);
             },
@@ -457,10 +525,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                 case 'tool_result':
                   logger.toolResult(event.name, event.success, (event.data ?? '').length, event.elapsed ?? 0);
                   if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
-                    console.log(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
+                    writeLine(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
                   }
                   if (event.name === 'run_command' && event.success) {
-                    console.log(`  \x1b[32m✓ 命令输出:\x1b[0m ${event.data ?? ''}`);
+                    writeLine(`  \x1b[32m✓ 命令输出:\x1b[0m ${event.data ?? ''}`);
                   }
                   break;
                 case 'iteration':
@@ -475,16 +543,18 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                   }
                   break;
                 case 'compress':
-                  if (debugMode) {
-                    logger.iteration(0);
-                  }
-                  console.log(`\n\x1b[33m[压缩]\x1b[0m ${event.beforeTokens} → ${event.afterTokens} tokens`);
+                  if (debugMode) logger.iteration(0);
+                  writeLine(`\x1b[33m[压缩]\x1b[0m ${event.beforeTokens} → ${event.afterTokens} tokens`);
                   break;
                 case 'command':
                   break;
               }
             },
           });
+
+          // 恢复输入框 label
+          inputBox.setLabel(' 输入 ');
+          screen.render();
           continue;
         }
       }
@@ -494,8 +564,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       saveToSession({ role: 'user', content: trimmed });
       autoSave();
 
-      // 开始思考动画
-      boxRenderer.startThinking();
+      // 更新输入框 label 显示思考状态
+      inputBox.setLabel(` ⠹ 思考中 `);
+      screen.render();
 
       await runAgent({
         client,
@@ -503,31 +574,29 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         messages,
         debug: debugMode,
         compressionConfig,
-        confirmToolCall: async (toolName, args) => {
+        confirmToolCall: async (toolName, toolArgs) => {
           const tool = tools.get(toolName);
           const msg = tool?.confirmMessage
-            ? tool.confirmMessage(args)
+            ? tool.confirmMessage(toolArgs)
             : `即将执行: ${toolName}`;
           return askConfirm(msg);
         },
         onEvent: (event) => {
           switch (event.type) {
             case 'text':
-              // 缓冲文本，首次到达时自动停止思考动画
               boxRenderer.addText(event.content);
               break;
             case 'tool_call':
               logger.toolCall(event.name, event.args);
-              // 先渲染已缓冲文本，再显示工具调用
               boxRenderer.toolCall(event.name, event.args);
               break;
             case 'tool_result':
               logger.toolResult(event.name, event.success, (event.data ?? '').length, event.elapsed ?? 0);
               if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
-                console.log(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
+                writeLine(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
               }
               if (event.name === 'run_command' && event.success) {
-                console.log(`  \x1b[32m✓ 命令输出:\x1b[0m ${event.data ?? ''}`);
+                writeLine(`  \x1b[32m✓ 命令输出:\x1b[0m ${event.data ?? ''}`);
               }
               break;
             case 'iteration':
@@ -538,33 +607,34 @@ export async function startRepl(options: ReplOptions): Promise<void> {
               break;
             case 'done':
               if (event.answer) {
-                // 渲染最终对话框
                 boxRenderer.render();
                 saveToSession({ role: 'assistant', content: event.answer });
                 autoSave();
               }
               break;
             case 'compress':
-              if (debugMode) {
-                logger.iteration(0);
-              }
-              console.log(`\n\x1b[33m[压缩]\x1b[0m ${event.beforeTokens} → ${event.afterTokens} tokens`);
+              if (debugMode) logger.iteration(0);
+              writeLine(`\x1b[33m[压缩]\x1b[0m ${event.beforeTokens} → ${event.afterTokens} tokens`);
               break;
           }
         },
       });
+
+      // 恢复输入框 label
+      inputBox.setLabel(' 输入 ');
+      screen.render();
     } catch (err) {
       if (err instanceof Error && err.message.includes('closed')) {
         break;
       }
-      console.error('\n错误:', err instanceof Error ? err.message : String(err));
+      writeLine(`错误: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   // 退出时清理资源
   boxRenderer.destroy();
+  screen.destroy();
 
-  // 退出时保存会话
   if (currentSession.messages.length > 0) {
     await chatHistory.saveSession(currentSession);
     if (debugMode) {

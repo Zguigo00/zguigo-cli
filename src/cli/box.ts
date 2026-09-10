@@ -2,6 +2,8 @@
  * 对话框渲染器
  * 缓冲 assistant 的流式文本，回复结束后用 Unicode 边框一次性渲染
  * 等待期间显示动态思考动画
+ *
+ * 所有输出通过 writeLine 回调，兼容 blessed 屏幕
  */
 
 /** CJK 字符范围，这些字符在终端中占 2 个宽度 */
@@ -17,18 +19,13 @@ const CJK_RANGES = [
   [0x20000, 0x2A6DF], // CJK 扩展 B
 ];
 
-/**
- * 判断字符是否为 CJK 字符
- */
+/** 判断字符是否为 CJK 字符 */
 function isCJK(char: string): boolean {
   const code = char.codePointAt(0)!;
   return CJK_RANGES.some(([start, end]) => code >= start && code <= end);
 }
 
-/**
- * 计算字符串在终端中的显示宽度
- * CJK 字符占 2 个宽度，ASCII 字符占 1 个宽度
- */
+/** 计算字符串在终端中的显示宽度 */
 function getStringWidth(str: string): number {
   let width = 0;
   for (const char of str) {
@@ -37,10 +34,7 @@ function getStringWidth(str: string): number {
   return width;
 }
 
-/**
- * 按显示宽度对字符串进行换行
- * 考虑 CJK 字符的双宽度特性
- */
+/** 按显示宽度对字符串进行换行 */
 function wrapText(text: string, maxWidth: number): string[] {
   if (!text) return [''];
   if (maxWidth <= 0) return [text];
@@ -53,14 +47,12 @@ function wrapText(text: string, maxWidth: number): string[] {
       continue;
     }
 
-    // 逐字符换行
     let currentLine = '';
     let currentWidth = 0;
 
     for (const char of rawLine) {
       const charWidth = isCJK(char) ? 2 : 1;
 
-      // 如果加入这个字符会超出宽度，先换行
       if (currentWidth + charWidth > maxWidth && currentLine) {
         lines.push(currentLine);
         currentLine = '';
@@ -79,9 +71,7 @@ function wrapText(text: string, maxWidth: number): string[] {
   return lines.length > 0 ? lines : [''];
 }
 
-/**
- * 思考动画帧
- */
+/** 思考动画帧 */
 const THINKING_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /** ANSI 颜色 */
@@ -91,14 +81,17 @@ const BOLD = '\x1b[1m';
 const MAGENTA = '\x1b[35m';
 const RESET = '\x1b[0m';
 
-/** 内容区域宽度（两边边框 + padding = 6） */
+/** 内容区域宽度比例 */
 const CONTENT_WIDTH_RATIO = 0.85;
+
+/** 输出回调类型 */
+export type WriteLineFn = (text: string) => void;
 
 /**
  * 对话框渲染器
  *
  * 用法：
- * 1. startThinking() - 开始显示思考动画
+ * 1. startThinking() - 开始显示思考动画（通过 onThinking 回调）
  * 2. addText(chunk) - 缓冲流式文本（首次文本到达自动停止动画）
  * 3. toolCall() - 渲染已缓冲文本 + 显示工具调用
  * 4. render() - 渲染最终边框
@@ -111,46 +104,45 @@ export class BoxRenderer {
   private thinkingFrameIndex = 0;
   private state: 'idle' | 'thinking' | 'done' = 'idle';
   private terminalWidth: number;
-  private onResize: (() => void) | null = null;
-
-  constructor() {
-    this.terminalWidth = process.stdout.columns || 80;
-
-    // 监听终端窗口大小变化
-    this.onResize = () => {
-      this.terminalWidth = process.stdout.columns || 80;
-    };
-    process.stdout.on('resize', this.onResize);
-  }
+  private writeLine: WriteLineFn;
+  private onThinking: ((frame: string) => void) | null = null;
 
   /**
-   * 开始显示思考动画
+   * @param writeLine 输出函数，每行调用一次（可以是 console.log 或 blessed log）
+   * @param thinkingCallback 思考动画回调，每帧调用（blessed 模式下用于更新 label）
    */
+  constructor(writeLine?: WriteLineFn, thinkingCallback?: (frame: string) => void) {
+    this.writeLine = writeLine ?? ((text: string) => console.log(text));
+    this.onThinking = thinkingCallback ?? null;
+    this.terminalWidth = process.stdout.columns || 80;
+  }
+
+  /** 开始显示思考动画 */
   startThinking(): void {
     if (this.state === 'thinking') return;
     this.state = 'thinking';
     this.thinkingFrameIndex = 0;
 
     const frame = THINKING_FRAMES[0];
-    process.stdout.write(`\n${CYAN}${BOLD}${frame} 思考中...${RESET}\r`);
+    if (this.onThinking) {
+      this.onThinking(frame);
+    }
 
     this.thinkingInterval = setInterval(() => {
       this.thinkingFrameIndex = (this.thinkingFrameIndex + 1) % THINKING_FRAMES.length;
-      const frame = THINKING_FRAMES[this.thinkingFrameIndex];
-      process.stdout.write(`${CYAN}${BOLD}${frame} 思考中...${RESET}\r`);
+      const f = THINKING_FRAMES[this.thinkingFrameIndex];
+      if (this.onThinking) {
+        this.onThinking(f);
+      }
     }, 100);
   }
 
-  /**
-   * 停止思考动画
-   */
+  /** 停止思考动画 */
   private stopThinking(): void {
     if (this.thinkingInterval) {
       clearInterval(this.thinkingInterval);
       this.thinkingInterval = null;
     }
-    // 清除思考行
-    process.stdout.write('\r\x1b[K');
     this.state = 'done';
   }
 
@@ -173,9 +165,8 @@ export class BoxRenderer {
     if (this.content) {
       this.render();
     }
-    // 显示工具调用信息
     const argsDisplay = args.length > 100 ? args.slice(0, 100) + '...' : args;
-    console.log(`\n  ${MAGENTA}⚙ ${name}(${argsDisplay})${RESET}`);
+    this.writeLine(`\n  ${MAGENTA}⚙ ${name}(${argsDisplay})${RESET}`);
   }
 
   /**
@@ -191,15 +182,14 @@ export class BoxRenderer {
       Math.floor(this.terminalWidth * CONTENT_WIDTH_RATIO),
       100,
     );
-    const contentWidth = boxWidth - 4; // 减去 "│ " + " │"
+    const contentWidth = boxWidth - 4;
 
-    // 渲染边框
     const top = `${CYAN}╭${'─'.repeat(boxWidth - 2)}╮${RESET}`;
     const bottom = `${CYAN}╰${'─'.repeat(boxWidth - 2)}╯${RESET}`;
 
-    console.log(`\n${top}`);
+    this.writeLine('');
+    this.writeLine(top);
 
-    // 处理文本内容：按段落分割
     const textLines = this.content.split('\n');
     for (const line of textLines) {
       const wrapped = wrapText(line, contentWidth);
@@ -207,11 +197,11 @@ export class BoxRenderer {
         const lineWidth = getStringWidth(subLine);
         const padding = Math.max(0, contentWidth - lineWidth);
         const paddedLine = subLine + ' '.repeat(padding);
-        console.log(`${CYAN}│${RESET} ${DIM}${paddedLine}${RESET} ${CYAN}│${RESET}`);
+        this.writeLine(`${CYAN}│${RESET} ${DIM}${paddedLine}${RESET} ${CYAN}│${RESET}`);
       }
     }
 
-    console.log(`${bottom}`);
+    this.writeLine(bottom);
 
     // 重置状态
     this.content = '';
@@ -219,8 +209,13 @@ export class BoxRenderer {
   }
 
   /**
-   * 获取当前状态
+   * 输出非框线文本（用于命令输出、进度信息等）
    */
+  writeRaw(text: string): void {
+    this.writeLine(text);
+  }
+
+  /** 获取当前状态 */
   get isThinking(): boolean {
     return this.state === 'thinking';
   }
@@ -229,17 +224,11 @@ export class BoxRenderer {
     return this.content.length > 0;
   }
 
-  /**
-   * 清理资源
-   */
+  /** 清理资源 */
   destroy(): void {
     if (this.thinkingInterval) {
       clearInterval(this.thinkingInterval);
       this.thinkingInterval = null;
-    }
-    if (this.onResize) {
-      process.stdout.removeListener('resize', this.onResize);
-      this.onResize = null;
     }
   }
 }

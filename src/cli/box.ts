@@ -111,9 +111,16 @@ export class BoxRenderer {
   private thinkingFrameIndex = 0;
   private state: 'idle' | 'thinking' | 'done' = 'idle';
   private terminalWidth: number;
+  private onResize: (() => void) | null = null;
 
   constructor() {
     this.terminalWidth = process.stdout.columns || 80;
+
+    // 监听终端窗口大小变化
+    this.onResize = () => {
+      this.terminalWidth = process.stdout.columns || 80;
+    };
+    process.stdout.on('resize', this.onResize);
   }
 
   /**
@@ -229,6 +236,10 @@ export class BoxRenderer {
     if (this.thinkingInterval) {
       clearInterval(this.thinkingInterval);
       this.thinkingInterval = null;
+    }
+    if (this.onResize) {
+      process.stdout.removeListener('resize', this.onResize);
+      this.onResize = null;
     }
   }
 }

@@ -21,6 +21,8 @@ export interface RunAgentOptions {
   readOnlyTools?: string[];
   /** Skill 指令，注入到 system message 之前 */
   skillInstruction?: string;
+  /** 最大迭代轮数，默认 8 */
+  maxIterations?: number;
 }
 
 /**
@@ -33,7 +35,7 @@ export interface RunAgentOptions {
  * 4. 达到 8 轮上限 → 强制停止
  */
 export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
-  const { client, tools, onEvent, debug, readOnlyTools } = options;
+  const { client, tools, onEvent, debug, readOnlyTools, maxIterations = MAX_ITERATIONS } = options;
   const messages = options.messages;
 
   const state: AgentState = {
@@ -73,9 +75,9 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
     state.iteration++;
 
     // 超过上限
-    if (state.iteration > MAX_ITERATIONS) {
+    if (state.iteration > maxIterations) {
       state.stopped = true;
-      state.stopReason = `已达到最大调用轮数 (${MAX_ITERATIONS})，任务停止。`;
+      state.stopReason = `已达到最大调用轮数 (${maxIterations})，任务停止。`;
       emit({ type: 'done', answer: state.finalAnswer });
       break;
     }

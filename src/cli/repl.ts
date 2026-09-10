@@ -91,8 +91,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     alwaysScroll: true,
     scrollbar: { style: { bg: 'cyan' } },
     mouse: true,
-    keys: true,
-    vi: true,
+    keys: false,       // 不抢键盘焦点，方向键由 screen 统一处理
+    focusable: false,   // 不可被聚焦
     style: { fg: 'white', bg: 'black' },
     tags: false,
   });
@@ -336,6 +336,28 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     }
 
     // ---- 菜单隐藏时的按键处理 ----
+
+    // 方向键 → 滚动日志输出区
+    if (key.name === 'up') {
+      logBox.scroll(-1);
+      screen.render();
+      return;
+    }
+    if (key.name === 'down') {
+      logBox.scroll(1);
+      screen.render();
+      return;
+    }
+    if (key.name === 'pageup') {
+      logBox.scroll(-logBox.height as number);
+      screen.render();
+      return;
+    }
+    if (key.name === 'pagedown') {
+      logBox.scroll(logBox.height as number);
+      screen.render();
+      return;
+    }
 
     // Ctrl+C → 退出
     if (key.name === 'c' && key.ctrl) {

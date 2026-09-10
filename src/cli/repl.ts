@@ -28,6 +28,8 @@ import { BoxRenderer } from './box.js';
 import { handlePlanCommand, handleRunCommand } from './plan-runner.js';
 import { CommandMenu } from './command-menu.js';
 import type { CommandItem, CommandProvider } from './command-menu.js';
+import { createSpawnAgentTool } from '../agent/subagent-tool.js';
+import { runSubAgent } from '../agent/subagent.js';
 
 /** 只读模式下禁止的工具列表 */
 const READ_ONLY_TOOLS = ['write_file', 'edit_file', 'create_directory', 'run_command'];
@@ -128,6 +130,15 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const commandRegistry = new CommandRegistry(projectRoot);
   const knowledgeLoader = new KnowledgeLoader(projectRoot);
   const taskManager = new TaskManager();
+
+  // 注册 spawn_agent 工具（主对话层 depth=0）
+  tools.register(createSpawnAgentTool({
+    client,
+    tools,
+    writeLine,
+    depth: 0,
+    debug: debugMode,
+  }));
 
   // BoxRenderer 通过 writeLine 输出，思考动画更新输入框 label
   const boxRenderer = new BoxRenderer(writeLine, (frame: string) => {
@@ -242,7 +253,13 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         description: c.description,
         readOnly: c.readOnly,
       }));
-      return [...builtinItems, ...skillItems];
+      // 子 agent 命令（不在 commands.ts 注册，直接添加到菜单）
+      const agentItem: CommandItem = {
+        name: 'agent',
+        description: '启动子代理执行任务',
+        readOnly: false,
+      };
+      return [agentItem, ...builtinItems, ...skillItems];
     },
   };
 
@@ -501,6 +518,37 @@ export async function startRepl(options: ReplOptions): Promise<void> {
           client, tools, messages, taskManager, logger,
           debugMode, compressionConfig, askConfirm, logLine: writeLine,
         });
+        continue;
+      }
+
+      // 处理 /agent 命令 —— 启动子代理
+      if (trimmed.startsWith('/agent ')) {
+        const task = trimmed.slice(7).trim();
+        if (!task) {
+          writeLine('{red-fg}用法: /agent <任务描述>{/red-fg}');
+          writeLine('{red-fg}示例: /agent 分析 src/tools 目录的代码结构{/red-fg}');
+          continue;
+        }
+
+        logger.log(`执行子 agent: ${task}`);
+
+        const result = await runSubAgent({
+          task,
+          client,
+          tools,
+          writeLine,
+          depth: 0,
+          debug: debugMode,
+        });
+
+        // 将子 agent 结果加入主对话消息
+        messages.push(
+          { role: 'assistant', content: `[调用了子 agent 执行任务: ${task}]` },
+          { role: 'user', content: `子 agent 执行完毕，结果如下:\n${result}` },
+        );
+        saveToSession({ role: 'assistant', content: `[子 agent] ${task}` });
+        saveToSession({ role: 'user', content: `[子 agent 结果] ${result}` });
+        autoSave();
         continue;
       }
 

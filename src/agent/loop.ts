@@ -2,6 +2,7 @@ import type { ModelClient, Message } from '../model/types.js';
 import type { ToolRegistry } from '../tools/protocol.js';
 import type { AgentState, AgentEvent, AgentEventCallback } from './types.js';
 import { shouldCompress, compressMessages, type CompressionConfig } from '../context/index.js';
+import { executeToolCall, type ToolExecutionContext } from './tool-executor.js';
 
 /** 最大模型调用轮数 */
 const MAX_ITERATIONS = 8;
@@ -156,95 +157,34 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
       }
 
       // 有工具调用 → 执行工具
+      const toolCallObjects = toolCalls.map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      }));
       const assistantMessage: Message = {
         role: 'assistant',
         content: assistantText || null,
-        tool_calls: toolCalls.map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
+        tool_calls: toolCallObjects,
       };
       messages.push(assistantMessage);
 
-      for (const tc of toolCalls) {
-        emit({ type: 'tool_call', name: tc.name, args: tc.arguments });
+      const execContext: ToolExecutionContext = {
+        tools,
+        messages,
+        emit,
+        readOnlyTools,
+        confirmToolCall: options.confirmToolCall,
+      };
 
-        let toolStart = 0;
-        if (debug) {
-          toolStart = Date.now();
-          console.error(`[debug] 调用工具: ${tc.name}(${tc.arguments})`);
-        }
-
-        let parsedArgs: Record<string, unknown> = {};
-        try {
-          parsedArgs = JSON.parse(tc.arguments);
-        } catch {
-          // 参数 JSON 解析失败，回传给模型修正
-          const errorMsg = `工具参数 JSON 解析失败: ${tc.arguments}`;
-          messages.push({
-            role: 'tool',
-            content: JSON.stringify({ success: false, error: errorMsg }),
-            tool_call_id: tc.id,
-          });
-          emit({ type: 'error', message: errorMsg });
-          continue;
-        }
-
-        // 只读模式检查
-        if (readOnlyTools?.includes(tc.name)) {
-          const rejectMsg = `只读模式下禁止执行: ${tc.name}`;
-          messages.push({
-            role: 'tool',
-            content: JSON.stringify({ success: false, error: rejectMsg }),
-            tool_call_id: tc.id,
-          });
-          emit({ type: 'tool_result', name: tc.name, success: false, data: rejectMsg });
-          continue;
-        }
-
-        const tool = tools.get(tc.name);
-
-        // 需要确认的工具
-        if (tool?.requiresConfirmation && options.confirmToolCall) {
-          const confirmMsg = tool.confirmMessage
-            ? tool.confirmMessage(parsedArgs)
-            : `即将执行: ${tc.name}`;
-          emit({ type: 'confirm', toolName: tc.name, message: confirmMsg });
-
-          const approved = await options.confirmToolCall(tc.name, parsedArgs);
-          if (!approved) {
-            const rejectMsg = `用户拒绝执行: ${tc.name}`;
-            messages.push({
-              role: 'tool',
-              content: JSON.stringify({ success: false, error: rejectMsg }),
-              tool_call_id: tc.id,
-            });
-            emit({ type: 'tool_result', name: tc.name, success: false, data: rejectMsg });
-            continue;
-          }
-        }
-
-        const result = await tools.call(tc.name, parsedArgs);
-        const elapsed = debug ? Date.now() - toolStart : undefined;
+      for (const tc of toolCallObjects) {
+        emit({ type: 'tool_call', name: tc.function.name, args: tc.function.arguments });
 
         if (debug) {
-          console.error(`[debug] 工具结果: success=${result.success}, size=${(result.data ?? result.error ?? '').length}, elapsed=${elapsed}ms`);
+          console.error(`[debug] 调用工具: ${tc.function.name}(${tc.function.arguments})`);
         }
 
-        emit({
-          type: 'tool_result',
-          name: tc.name,
-          success: result.success,
-          data: result.data,
-          elapsed,
-        });
-
-        messages.push({
-          role: 'tool',
-          content: JSON.stringify(result),
-          tool_call_id: tc.id,
-        });
+        await executeToolCall(tc, execContext);
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

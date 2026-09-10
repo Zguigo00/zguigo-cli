@@ -10,6 +10,7 @@ import {
   getPlanUserPrompt,
   getExecuteUserPrompt,
 } from '../tasks/prompts.js';
+import { executeToolCall, type ToolExecutionContext } from './tool-executor.js';
 
 /** 最大模型调用轮数（每个任务） */
 const MAX_ITERATIONS_PER_TASK = 8;
@@ -240,32 +241,19 @@ async function generatePlan(
     // 如果有工具调用，执行工具后再重新请求计划
     if (toolCalls.length > 0) {
       // 执行工具
-      const assistantMessage: Message = {
+      const toolCallObjects = toolCalls.map(tc => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      }));
+      messages.push({
         role: 'assistant',
         content: assistantText || null,
-        tool_calls: toolCalls.map(tc => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
-      };
-      messages.push(assistantMessage);
+        tool_calls: toolCallObjects,
+      });
 
-      for (const tc of toolCalls) {
-        let parsedArgs: Record<string, unknown> = {};
-        try {
-          parsedArgs = JSON.parse(tc.arguments);
-        } catch {
-          parsedArgs = {};
-        }
-
-        const result = await tools.call(tc.name, parsedArgs);
-
-        messages.push({
-          role: 'tool',
-          content: JSON.stringify(result),
-          tool_call_id: tc.id,
-        });
+      for (const tc of toolCallObjects) {
+        await executeToolCall(tc, { tools, messages });
       }
 
       // 重新请求计划
@@ -400,82 +388,28 @@ async function executeTask(
       }
 
       // 有工具调用 → 执行工具
-      const assistantMessage: Message = {
+      const toolCallObjects = toolCalls.map(tc => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      }));
+      messages.push({
         role: 'assistant',
         content: assistantText || null,
-        tool_calls: toolCalls.map(tc => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
+        tool_calls: toolCallObjects,
+      });
+
+      const execContext: ToolExecutionContext = {
+        tools,
+        messages,
+        emit,
+        readOnlyTools,
+        confirmToolCall,
       };
-      messages.push(assistantMessage);
 
-      for (const tc of toolCalls) {
-        emit?.({ type: 'tool_call', name: tc.name, args: tc.arguments });
-
-        let parsedArgs: Record<string, unknown> = {};
-        try {
-          parsedArgs = JSON.parse(tc.arguments);
-        } catch {
-          const errorMsg = `工具参数 JSON 解析失败: ${tc.arguments}`;
-          messages.push({
-            role: 'tool',
-            content: JSON.stringify({ success: false, error: errorMsg }),
-            tool_call_id: tc.id,
-          });
-          emit?.({ type: 'error', message: errorMsg });
-          continue;
-        }
-
-        // 只读模式检查
-        if (readOnlyTools?.includes(tc.name)) {
-          const rejectMsg = `只读模式下禁止执行: ${tc.name}`;
-          messages.push({
-            role: 'tool',
-            content: JSON.stringify({ success: false, error: rejectMsg }),
-            tool_call_id: tc.id,
-          });
-          emit?.({ type: 'tool_result', name: tc.name, success: false, data: rejectMsg });
-          continue;
-        }
-
-        const tool = tools.get(tc.name);
-
-        // 需要确认的工具
-        if (tool?.requiresConfirmation && confirmToolCall) {
-          const confirmMsg = tool.confirmMessage
-            ? tool.confirmMessage(parsedArgs)
-            : `即将执行: ${tc.name}`;
-          emit?.({ type: 'confirm', toolName: tc.name, message: confirmMsg });
-
-          const approved = await confirmToolCall(tc.name, parsedArgs);
-          if (!approved) {
-            const rejectMsg = `用户拒绝执行: ${tc.name}`;
-            messages.push({
-              role: 'tool',
-              content: JSON.stringify({ success: false, error: rejectMsg }),
-              tool_call_id: tc.id,
-            });
-            emit?.({ type: 'tool_result', name: tc.name, success: false, data: rejectMsg });
-            continue;
-          }
-        }
-
-        const result = await tools.call(tc.name, parsedArgs);
-
-        emit?.({
-          type: 'tool_result',
-          name: tc.name,
-          success: result.success,
-          data: result.data,
-        });
-
-        messages.push({
-          role: 'tool',
-          content: JSON.stringify(result),
-          tool_call_id: tc.id,
-        });
+      for (const tc of toolCallObjects) {
+        emit?.({ type: 'tool_call', name: tc.function.name, args: tc.function.arguments });
+        await executeToolCall(tc, execContext);
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

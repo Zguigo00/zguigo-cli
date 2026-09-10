@@ -78,6 +78,17 @@ Skill 命令:
   /command-name 任务描述  执行对应的 Skill 命令
   例如: /review src/app.ts  执行代码审查
 
+会话管理:
+  /history      显示历史会话列表
+  /load         加载历史会话
+  /save         保存当前会话
+  /new          创建新会话
+  /delete       删除历史会话
+
+快照回滚:
+  /undo         撤销最近一次文件变更
+  /rollback     查看快照历史或回滚到指定版本
+
 直接输入文本即可与 AI 对话。
 按 Ctrl+C 退出。
 `);
@@ -405,6 +416,87 @@ Skill 命令:
       const session = ctx.chatHistory.createSession();
       ctx.switchSession?.(session);
       console.log(`已创建新会话: ${session.title}`);
+    },
+  },
+  {
+    name: '/load',
+    description: '加载历史会话',
+    handler: async (ctx) => {
+      if (!ctx.chatHistory || !ctx.switchSession) {
+        console.log('聊天历史未配置。');
+        return;
+      }
+
+      // 从输入中解析会话 ID
+      const sessionId = ctx.input?.replace(/^\/load\s*/, '').trim();
+      if (!sessionId) {
+        // 没有指定 ID，显示会话列表供选择
+        const sessions = await ctx.chatHistory.listSessions();
+        if (sessions.length === 0) {
+          console.log('没有历史会话。');
+          return;
+        }
+        console.log('\n用法: /load <会话ID>\n');
+        console.log('可用会话:');
+        sessions.forEach((s, i) => {
+          const date = new Date(s.updatedAt).toLocaleString('zh-CN');
+          console.log(`  [${s.id}] ${s.title} (${s.metadata.messageCount} 条消息, ${date})`);
+        });
+        console.log('');
+        return;
+      }
+
+      const session = await ctx.chatHistory.loadSession(sessionId);
+      if (!session) {
+        console.log(`未找到会话: ${sessionId}`);
+        return;
+      }
+
+      // 先保存当前会话
+      if (ctx.currentSession && ctx.currentSession.messages.length > 0) {
+        await ctx.chatHistory.saveSession(ctx.currentSession);
+      }
+
+      ctx.switchSession(session);
+      console.log(`已加载会话: ${session.title} (${session.messages.length} 条消息)`);
+    },
+  },
+  {
+    name: '/delete',
+    description: '删除历史会话',
+    handler: async (ctx) => {
+      if (!ctx.chatHistory) {
+        console.log('聊天历史未配置。');
+        return;
+      }
+
+      // 从输入中解析会话 ID
+      const sessionId = ctx.input?.replace(/^\/delete\s*/, '').trim();
+      if (!sessionId) {
+        // 没有指定 ID，显示会话列表供选择
+        const sessions = await ctx.chatHistory.listSessions();
+        if (sessions.length === 0) {
+          console.log('没有历史会话。');
+          return;
+        }
+        console.log('\n用法: /delete <会话ID>\n');
+        console.log('可用会话:');
+        sessions.forEach(s => {
+          const current = ctx.currentSession?.id === s.id ? ' (当前)' : '';
+          console.log(`  [${s.id}] ${s.title}${current}`);
+        });
+        console.log('');
+        return;
+      }
+
+      // 禁止删除当前会话
+      if (ctx.currentSession?.id === sessionId) {
+        console.log('不能删除当前会话。请先切换到其他会话或创建新会话。');
+        return;
+      }
+
+      await ctx.chatHistory.deleteSession(sessionId);
+      console.log(`已删除会话: ${sessionId}`);
     },
   },
   // ==================== 快照回滚命令 ====================

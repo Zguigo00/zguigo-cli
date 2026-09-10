@@ -17,15 +17,18 @@ zguigo_Cli/
 ├── src/
 │   ├── index.ts          # 入口：加载配置 → 初始化 → 启动 REPL
 │   ├── agent/
-│   │   ├── index.ts      # 公共导出
-│   │   ├── loop.ts       # Agent Loop 核心循环
-│   │   ├── plan-loop.ts  # Plan and Execute 模式循环
-│   │   └── types.ts      # Agent 状态和事件类型
+│   │   ├── index.ts          # 公共导出
+│   │   ├── loop.ts           # Agent Loop 核心循环
+│   │   ├── plan-loop.ts      # Plan and Execute 模式循环
+│   │   ├── tool-executor.ts  # 共享工具执行函数（JSON 解析 + 只读检查 + 确认 + 执行）
+│   │   └── types.ts          # Agent 状态和事件类型
 │   ├── cli/
-│   │   ├── index.ts      # 公共导出
-│   │   ├── repl.ts       # REPL 交互界面（含确认提示、Skill 触发、Plan 模式、聊天记录）
-│   │   ├── commands.ts   # 内置命令（18个：/help, /clear, /compact, /commands, /exit, /plan, /tasks, /run, /task-*, /history, /save, /new, /undo, /rollback）
-│   │   └── render.ts     # 输出渲染
+│   │   ├── index.ts          # 公共导出
+│   │   ├── repl.ts           # blessed TUI 主循环（screen + 按键路由 + Agent 调用）
+│   │   ├── command-menu.ts   # 浮动命令菜单（CommandProvider 接口 + blessed List）
+│   │   ├── plan-runner.ts    # /plan 和 /run 的执行逻辑（从 repl.ts 拆分）
+│   │   ├── box.ts            # 对话框渲染器（Unicode 边框 + 思考动画）
+│   │   └── commands.ts       # 20 个内置命令定义
 │   ├── history/          # 聊天记录与快照回滚
 │   │   ├── index.ts      # 公共导出
 │   │   ├── protocol.ts   # ChatSession、SnapshotEntry 等接口
@@ -108,6 +111,7 @@ zguigo_Cli/
     ├── agent-paradigms.md          # Agent 范式对比（ReAct/Plan/Reflection）
     ├── skill-vs-plan-execute.md    # Skill vs Plan and Execute 方案对比
     ├── history-rollback-flow.md    # 聊天记录与 Git 快照回滚实现流程
+    ├── blessed-tui-architecture.md # blessed TUI 架构设计
     └── testing.md                  # 测试机制说明
 ```
 
@@ -151,8 +155,10 @@ zguigo_Cli/
 | 命令 | 说明 |
 |------|------|
 | `/history` | 显示历史会话列表 |
+| `/load` | 加载历史会话 |
 | `/save` | 保存当前会话 |
 | `/new` | 创建新会话 |
+| `/delete` | 删除历史会话 |
 | `/undo` | 撤销最近一次文件变更 |
 | `/rollback` | 查看快照历史 |
 
@@ -160,7 +166,7 @@ zguigo_Cli/
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| REPL 交互 | ✅ | readline + Tab 补全 + 内置命令 |
+| REPL 交互 | ✅ | blessed TUI（浮动命令菜单 + 逐字符输入 + 可滚动日志） |
 | 流式对话 | ✅ | 通过 MiMo 模型实时输出 |
 | 只读工具 | ✅ | list_files + read_file |
 | 写入工具 | ✅ | write_file + edit_file + create_directory |

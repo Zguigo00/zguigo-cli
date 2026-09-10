@@ -75,6 +75,9 @@ zguigo - 终端 AI 编程助手
   /commands     列出可用的 Skill 命令
   /exit         退出程序
 
+子代理命令:
+  /agent <任务>  启动子代理执行独立任务（独立对话历史）
+
 Plan and Execute 命令:
   /plan         启动 Plan 模式，生成任务列表
   /tasks        显示当前任务列表

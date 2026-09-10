@@ -21,6 +21,8 @@ zguigo_Cli/
 │   │   ├── loop.ts           # Agent Loop 核心循环
 │   │   ├── plan-loop.ts      # Plan and Execute 模式循环
 │   │   ├── tool-executor.ts  # 共享工具执行函数（JSON 解析 + 只读检查 + 确认 + 执行）
+│   │   ├── subagent.ts       # SubAgent 子代理运行器（独立对话历史 + 深度限制）
+│   │   ├── subagent-tool.ts  # spawn_agent 工具定义（主 Agent 自动触发子代理）
 │   │   └── types.ts          # Agent 状态和事件类型
 │   ├── cli/
 │   │   ├── index.ts          # 公共导出
@@ -125,6 +127,7 @@ zguigo_Cli/
 | `edit_file` | 写入 | ✅ | 查找替换编辑，要求唯一匹配 |
 | `create_directory` | 写入 | ✅ | 递归创建目录 |
 | `run_command` | Shell | ✅ | 执行命令，30秒超时，50KB输出截断 |
+| `spawn_agent` | 子代理 | ❌ | 启动子代理执行独立任务（嵌套深度限制2层） |
 
 ## Skill 命令
 
@@ -149,6 +152,12 @@ zguigo_Cli/
 | `/task-add` | 添加新任务 |
 | `/task-remove` | 删除任务 |
 | `/clear-tasks` | 清空任务列表 |
+
+## 子代理命令
+
+| 命令 | 说明 |
+|------|------|
+| `/agent <任务>` | 启动子代理执行独立任务（独立对话历史） |
 
 ## 聊天记录与快照命令
 
@@ -177,6 +186,7 @@ zguigo_Cli/
 | Skill 命令 | ✅ | /review, /test, /explain, /refactor + 自定义命令 |
 | Skills 知识 | ✅ | 启动时自动加载 `.zguigo/skills/*.md` |
 | Plan and Execute | ✅ | 任务规划与执行，支持依赖关系 |
+| SubAgent 子代理 | ✅ | /agent 命令 + spawn_agent 工具，独立对话历史，嵌套深度限制 |
 | 聊天记录 | ✅ | JSON 文件存储，多会话支持 |
 | Git 快照回滚 | ✅ | 写入工具执行前自动创建快照 |
 | --debug 模式 | ✅ | 输出调用细节、耗时、token 数 |

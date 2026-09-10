@@ -14,7 +14,7 @@ export interface AgentState {
 export type AgentEvent =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; name: string; args: string }
-  | { type: 'tool_result'; name: string; success: boolean; data?: string }
+  | { type: 'tool_result'; name: string; success: boolean; data?: string; elapsed?: number }
   | { type: 'iteration'; number: number }
   | { type: 'error'; message: string }
   | { type: 'done'; answer: string | null }

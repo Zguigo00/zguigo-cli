@@ -431,7 +431,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                   logger.toolCall(event.name, event.args);
                   break;
                 case 'tool_result':
-                  logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+                  logger.toolResult(event.name, event.success, (event.data ?? '').length, event.elapsed ?? 0);
                   if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
                     console.log(`\n[文件变更] ${event.data ?? ''}`);
                   }
@@ -566,7 +566,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                     logger.toolCall(event.name, event.args);
                     break;
                   case 'tool_result':
-                    logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+                    logger.toolResult(event.name, event.success, (event.data ?? '').length, event.elapsed ?? 0);
                     if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
                       console.log(`\n[文件变更] ${event.data ?? ''}`);
                     }
@@ -666,7 +666,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
                   boxRenderer.toolCall(event.name, event.args);
                   break;
                 case 'tool_result':
-                  logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+                  logger.toolResult(event.name, event.success, (event.data ?? '').length, event.elapsed ?? 0);
                   if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
                     console.log(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
                   }
@@ -733,7 +733,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
               boxRenderer.toolCall(event.name, event.args);
               break;
             case 'tool_result':
-              logger.toolResult(event.name, event.success, (event.data ?? '').length, 0);
+              logger.toolResult(event.name, event.success, (event.data ?? '').length, event.elapsed ?? 0);
               if (['write_file', 'edit_file', 'create_directory'].includes(event.name) && event.success) {
                 console.log(`  \x1b[32m✓ 文件变更:\x1b[0m ${event.data ?? ''}`);
               }

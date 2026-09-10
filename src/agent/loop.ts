@@ -170,8 +170,9 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
       for (const tc of toolCalls) {
         emit({ type: 'tool_call', name: tc.name, args: tc.arguments });
 
+        let toolStart = 0;
         if (debug) {
-          const start = Date.now();
+          toolStart = Date.now();
           console.error(`[debug] 调用工具: ${tc.name}(${tc.arguments})`);
         }
 
@@ -225,10 +226,10 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
         }
 
         const result = await tools.call(tc.name, parsedArgs);
+        const elapsed = debug ? Date.now() - toolStart : undefined;
 
         if (debug) {
-          const elapsed = Date.now();
-          console.error(`[debug] 工具结果: success=${result.success}, size=${(result.data ?? result.error ?? '').length}`);
+          console.error(`[debug] 工具结果: success=${result.success}, size=${(result.data ?? result.error ?? '').length}, elapsed=${elapsed}ms`);
         }
 
         emit({
@@ -236,6 +237,7 @@ export async function runAgent(options: RunAgentOptions): Promise<AgentState> {
           name: tc.name,
           success: result.success,
           data: result.data,
+          elapsed,
         });
 
         messages.push({

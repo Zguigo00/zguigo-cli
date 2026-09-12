@@ -1,10 +1,27 @@
 {
   "name": "zguigo-cli",
   "version": "0.1.0",
-  "description": "终端 AI 编程助手 - 面向学习 Agent 原理",
+  "description": "终端 AI 编程助手 - 基于 OpenAI 兼容 API 的代码编写/调试/优化工具",
   "type": "module",
   "bin": {
     "zguigo": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "cli",
+    "ai",
+    "coding-agent",
+    "openai",
+    "terminal",
+    "developer-tools"
+  ],
+  "author": "Zguigo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zguigo00/zguigo-cli"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
